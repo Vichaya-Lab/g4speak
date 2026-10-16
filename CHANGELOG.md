@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.4] - 2026-10-17
+
+- Keep the active overlay visible and above other windows by periodically restoring its native Windows topmost state without taking keyboard focus.
+- Request low-latency microphone capture so recording begins sooner after the hotkey is pressed.
+- Correct the application version shown by the tray icon and notifications.
+
 ## [1.0.2] - 2026-10-16
 
 - **Restored Whisper Large-v3 Full Model**: Permanently standardizes on the 32-layer `whisper-large-v3` model. Fixes the issue where `whisper-large-v3-turbo` collapsed on Thai speech into random non-human gibberish.

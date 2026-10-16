@@ -11,6 +11,7 @@ venv/
 # Build output
 build/
 dist/
+release_dist/
 
 # App images (overrides global *.png / *.ico ignores)
 !assets/logo.png

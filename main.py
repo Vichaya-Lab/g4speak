@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.4"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -948,16 +948,18 @@ class RecorderThread(QThread):
         self._stop_event.set()
 
     def run(self):
-        chunks = []
-        total = 0
         max_samples = int(MAX_RECORD_SECONDS * SAMPLE_RATE)
-        try:
+
+        def capture(latency):
+            chunks = []
+            total = 0
             with sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype="float32",
                 blocksize=BLOCK_SIZE,
                 device=AUDIO_DEVICE,
+                latency=latency,
             ) as stream:
                 while not self._stop_event.is_set() and total < max_samples:
                     data, _ = stream.read(BLOCK_SIZE)
@@ -965,10 +967,18 @@ class RecorderThread(QThread):
                     chunks.append(mono)
                     total += len(mono)
                     self.level.emit(rms_to_level(float(np.sqrt(np.mean(mono * mono)))))
+            return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+
+        try:
+            try:
+                audio = capture("low")
+            except Exception as low_latency_error:
+                logging.warning("Low-latency microphone open failed; retrying with device default: %s",
+                                low_latency_error)
+                audio = capture(None)
         except Exception as exc:
             self.failed.emit(f"Microphone error: {exc}")
             return
-        audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
         self.recorded.emit(audio)
 
 
@@ -1084,7 +1094,32 @@ class Overlay(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start(FRAME_MS)
 
+        # Windows can occasionally demote a Qt topmost tool window after display
+        # changes or another app recreates its own topmost window. Reassert the
+        # native topmost state without activating the overlay or stealing focus.
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.timeout.connect(self._keep_on_top)
+        self._topmost_timer.start(750)
+
         self.show()
+        self._keep_on_top()
+
+    def _keep_on_top(self):
+        if self._mode == IDLE:
+            return
+        if not self.isVisible():
+            self.show()
+        if sys.platform == "win32" and self.winId():
+            SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_NOACTIVATE = 0x0010
+            SWP_SHOWWINDOW = 0x0040
+            HWND_TOPMOST = -1
+            user32.SetWindowPos(
+                wintypes.HWND(int(self.winId())), wintypes.HWND(HWND_TOPMOST),
+                0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
 
     @Property(float)
     def progress(self):
@@ -1158,6 +1193,7 @@ class Overlay(QWidget):
         self._update_tooltip()
         self._apply_geometry()
         self._animate_to(1.0)
+        self._keep_on_top()
 
     def set_locked(self, is_locked: bool):
         self._is_locked = is_locked
@@ -1182,6 +1218,7 @@ class Overlay(QWidget):
         self.setToolTip("Processing...")
         self._apply_geometry()
         self._animate_to(1.0)
+        self._keep_on_top()
 
     def set_idle(self):
         self._mode = IDLE
