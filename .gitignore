@@ -1,0 +1,25 @@
+# Secrets
+.env
+groq_api_key.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+
+# App images (overrides global *.png / *.ico ignores)
+!assets/logo.png
+!assets/logo.ico
+!assets/demo-*.png
+
+# Render & promo intermediates
+.render/
+*.mp4
+render_promo.cjs
+promo_motion_graphic.html
+actual_html_view.png
