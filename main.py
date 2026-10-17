@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.1"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -936,50 +936,90 @@ def rms_to_level(rms: float) -> float:
 
 
 class RecorderThread(QThread):
+    """Keep the device warm; discard all samples outside explicit recording sessions."""
     level = Signal(float)
-    recorded = Signal(object)
-    failed = Signal(str)
+    recorded = Signal(object, int)
+    failed = Signal(str, int)
 
     def __init__(self):
         super().__init__()
-        self._stop_event = threading.Event()
+        self._shutdown = threading.Event()
+        self._lock = threading.Lock()
+        self._session = None
+        self._chunks = []
+        self._total = 0
 
-    def stop(self):
-        self._stop_event.set()
+    def begin(self, session):
+        with self._lock:
+            self._chunks = []
+            self._total = 0
+            self._session = session
+
+    def stop(self, discard=False, expected_session=None):
+        with self._lock:
+            if expected_session is not None and self._session != expected_session:
+                return
+            session, chunks = self._session, self._chunks
+            self._session = None
+            self._chunks = []
+            self._total = 0
+        if session is not None and not discard:
+            audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+            self.recorded.emit(audio, session)
+
+    def shutdown(self):
+        self.stop(discard=True)
+        self._shutdown.set()
+
+    def _capture(self, data, frames, timing, status):
+        with self._lock:
+            if self._session is None:
+                return
+            mono = data[:, 0].copy()
+            remaining = int(MAX_RECORD_SECONDS * SAMPLE_RATE) - self._total
+            mono = mono[:remaining]
+            self._chunks.append(mono)
+            self._total += len(mono)
+            self.level.emit(rms_to_level(float(np.sqrt(np.mean(mono * mono)))))
+            complete = self._total >= MAX_RECORD_SECONDS * SAMPLE_RATE
+            session = self._session
+        if complete:
+            self.stop(expected_session=session)
 
     def run(self):
-        max_samples = int(MAX_RECORD_SECONDS * SAMPLE_RATE)
-
-        def capture(latency):
-            chunks = []
-            total = 0
-            with sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="float32",
-                blocksize=BLOCK_SIZE,
-                device=AUDIO_DEVICE,
-                latency=latency,
-            ) as stream:
-                while not self._stop_event.is_set() and total < max_samples:
-                    data, _ = stream.read(BLOCK_SIZE)
-                    mono = data[:, 0].copy()
-                    chunks.append(mono)
-                    total += len(mono)
-                    self.level.emit(rms_to_level(float(np.sqrt(np.mean(mono * mono)))))
-            return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
-
-        try:
+        while not self._shutdown.is_set():
             try:
-                audio = capture("low")
-            except Exception as low_latency_error:
-                logging.warning("Low-latency microphone open failed; retrying with device default: %s",
-                                low_latency_error)
-                audio = capture(None)
-        except Exception as exc:
-            self.failed.emit(f"Microphone error: {exc}")
-            return
-        self.recorded.emit(audio)
+                stream = None
+                for latency in ("low", None):
+                    try:
+                        stream = sd.InputStream(
+                            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+                            blocksize=BLOCK_SIZE, device=AUDIO_DEVICE, latency=latency,
+                            callback=self._capture,
+                        )
+                        stream.start()
+                        break
+                    except Exception:
+                        if stream is not None:
+                            stream.close()
+                            stream = None
+                        if latency is None:
+                            raise
+                logging.info("Microphone ready (input latency %.3fs).", stream.latency)
+                try:
+                    while not self._shutdown.wait(0.25):
+                        if not stream.active:
+                            raise RuntimeError("Microphone disconnected")
+                finally:
+                    stream.close()
+            except Exception as exc:
+                logging.warning("Microphone unavailable; reconnecting: %s", exc)
+                with self._lock:
+                    session = self._session
+                self.stop(discard=True, expected_session=session)
+                if session is not None:
+                    self.failed.emit(f"Microphone error: {exc}", session)
+                self._shutdown.wait(1.0)
 
 
 class ProcessingThread(QThread):
@@ -1077,9 +1117,6 @@ class Overlay(QWidget):
         center = (BAR_COUNT - 1) / 2.0
         self._weights = [1.0 - 0.48 * (abs(i - center) / center) ** 1.2 for i in range(BAR_COUNT)]
 
-        geo = QApplication.primaryScreen().availableGeometry()
-        self._center_x = geo.center().x()
-        self._bottom_y = geo.bottom() - OVERLAY_BOTTOM_MARGIN
         self._apply_geometry()
 
         self._anim = QPropertyAnimation(self, b"progress", self)
@@ -1105,8 +1142,7 @@ class Overlay(QWidget):
         self._keep_on_top()
 
     def _keep_on_top(self):
-        if self._mode == IDLE:
-            return
+        self._apply_geometry()
         if not self.isVisible():
             self.show()
         if sys.platform == "win32" and self.winId():
@@ -1140,7 +1176,10 @@ class Overlay(QWidget):
         self._apply_geometry()
 
     def _apply_geometry(self):
-        geo = QApplication.primaryScreen().availableGeometry()
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
         self._center_x = geo.center().x()
         self._bottom_y = geo.bottom() - OVERLAY_BOTTOM_MARGIN
         p = self._progress
@@ -1553,7 +1592,12 @@ class G4SpeakApp(QObject):
         self.stt = SpeechToTextEngine()
         self.refiner = TextRefiner(groq_client_getter=lambda: self.stt._groq_client)
         self.overlay = Overlay()
-        self._recorder = None
+        self._record_id = 0
+        self._recorder = RecorderThread()
+        self._recorder.level.connect(self.overlay.set_level)
+        self._recorder.recorded.connect(self._on_recorded)
+        self._recorder.failed.connect(self._on_recording_failure)
+        self._recorder.start()
         self._worker = None
         self._prev_hwnd = 0
         self._proc_id = 0
@@ -1599,8 +1643,8 @@ class G4SpeakApp(QObject):
         self._proc_id += 1
         if self._recorder is not None:
             try:
-                self._recorder.stop()
-                self._wait(self._recorder)
+                self._recorder.shutdown()
+                self._recorder.wait()
             except Exception:
                 pass
         if self._worker is not None:
@@ -1700,16 +1744,12 @@ class G4SpeakApp(QObject):
 
     def _start_recording(self):
         self._prev_hwnd = get_foreground_window()
-        self._wait(self._recorder)
         self.state = RECORDING
         self.is_locked = False
         self.hook.set_app_active(True)
+        self._record_id += 1
+        self._recorder.begin(self._record_id)
         self.overlay.start_listening(self._prev_hwnd, is_locked=False)
-        self._recorder = RecorderThread()
-        self._recorder.level.connect(self.overlay.set_level)
-        self._recorder.recorded.connect(self._on_recorded)
-        self._recorder.failed.connect(self._on_failure)
-        self._recorder.start()
         logging.info("Recording started (target HWND: %s)...", self._prev_hwnd)
 
     def _stop_recording(self):
@@ -1728,11 +1768,16 @@ class G4SpeakApp(QObject):
         self._proc_id += 1
         self._grace_timer.stop()
         if self._recorder is not None:
-            self._recorder.stop()
+            self._recorder.stop(discard=True)
         self._finish_idle()
 
-    def _on_recorded(self, audio):
-        if self.state == IDLE:
+    def _on_recording_failure(self, msg, session):
+        if session == self._record_id and self.state in (RECORDING, STOPPING):
+            self._notify_error(msg)
+            self._finish_idle()
+
+    def _on_recorded(self, audio, session):
+        if session != self._record_id or self.state not in (RECORDING, STOPPING):
             logging.info("Stale audio dropped (already idle/cancelled).")
             return
         # Discard accidental key taps shorter than 0.60 seconds

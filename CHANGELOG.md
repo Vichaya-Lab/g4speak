@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1] - 2026-10-17
+
+- Restore the floating overlay above other windows in idle, recording, and processing states without stealing focus. Reposition it after taskbar or display changes.
+- Keep the microphone stream ready between recordings to remove repeated device startup delays. Idle samples are discarded; only active sessions are retained.
+- Reconnect after microphone failures and reject stale recording results after cancellation.
+
 ## [1.0.4] - 2026-10-17
 
 - Keep the active overlay visible and above other windows by periodically restoring its native Windows topmost state without taking keyboard focus.

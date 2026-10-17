@@ -55,6 +55,8 @@ Grab `G4Speak.exe` from [Releases](https://github.com/Vichaya-Lab/g4speak/releas
 
 ---
 
+The microphone stays open while G4Speak is running so dictation starts promptly. Audio outside an active recording is discarded and is never sent to the API.
+
 ## Tray Menu
 
 Right-click the icon by the Windows clock:
