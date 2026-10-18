@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2] - 2026-10-18
+
+- Detect speech locally with the bundled Silero VAD v6 model before uploading audio; silence, hiss, hum, and clicks no longer pass on energy alone. Stop recognition if the detector is unavailable.
+- Reject high no-speech probability, low-confidence, and repetitive transcription segments, including responses missing confidence metadata.
+- Preserve quiet speech and microphone tails, trim outer silence, and cap amplification at 2x after speech detection.
+- Add saved Auto, Thai, and English dictation language choices to the tray menu.
+- Bound processing to 1.8 seconds with API retries disabled. Fall back to the transcript if optional refinement times out; notify on recognition failures and discard late results.
+- Add real human speech, noise rejection, confidence parsing, and deadline regression tests. Accuracy and successful transcription within two seconds still depend on audio quality and the API.
+
 ## [1.1] - 2026-10-17
 
 - Restore the floating overlay above other windows in idle, recording, and processing states without stealing focus. Reposition it after taskbar or display changes.

@@ -34,18 +34,19 @@ import numpy as np
 import pyautogui
 import pyperclip
 import sounddevice as sd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from openai import OpenAI
+from speech_vad import get_speech_detector
 from PySide6.QtCore import (QEasingCurve, QFileInfo, QObject, QPointF,
                           Property, QPropertyAnimation, QRectF, Qt, QThread,
                           QTimer, Signal)
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QActionGroup, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
                              QSystemTrayIcon, QWidget)
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -98,9 +99,11 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 BLOCK_SIZE = 512                                    # 32 ms per chunk at 16 kHz
 MAX_RECORD_SECONDS = 60
-MIN_RECORD_SECONDS = 0.60                           # Discard accidental key taps shorter than 0.60s
-MIN_VOICE_PEAK = 0.016                              # Vocal peak threshold to reject micro-noise/clicks
-MIN_VOICE_RMS = 0.0020                              # Sustained RMS threshold to reject transients
+MIN_RECORD_SECONDS = 0.16                           # Keep short words such as yes/no
+MIN_VOICE_PEAK = 0.0015
+MIN_VOICE_RMS = 0.00035
+RECORD_TAIL_MS = 96                                 # Drain microphone latency after key release
+PROCESSING_BUDGET_S = 1.80                          # Leaves time for capture tail and text insertion
 AUDIO_DEVICE = None                                 # None = default mic
 
 # Floating capsule dimensions (super compact)
@@ -123,8 +126,6 @@ SILENCE_HALLUCINATIONS = {
     "อย่าลืมกดติดตาม",
     "อย่าลืมกดไลค์กดแชร์",
     "อย่าลืมกดกระดิ่ง",
-    "สวัสดีครับ",
-    "สวัสดีค่ะ",
     "โปรดติดตามตอนต่อไป",
     "โปรดติดตามชม",
     "โปรดติดตามตอนต่อไปนะ",
@@ -516,6 +517,8 @@ ENV_TEMPLATE = (
     "GROQ_API_KEY=\n"
     "# STT Model: 'whisper-large-v3' (recommended for best Thai speech quality)\n"
     "GROQ_STT_MODEL=whisper-large-v3\n"
+    "# auto preserves Thai/English switching; th/en can be used for single-language dictation\n"
+    "GROQ_STT_LANGUAGE=auto\n"
     "# Optional: Set to true to enable Groq Cloud LLM text refinement (default: false)\n"
     "GROQ_REFINER=false\n"
 )
@@ -677,6 +680,62 @@ def format_tech_casing(text: str) -> str:
 _POLITE_TAIL = re.compile(r"\s*(ครับ|ค่ะ|คะ|นะคะ|นะครับ)\s*$")
 
 
+def prepare_speech_audio(audio: np.ndarray) -> np.ndarray:
+    """Require neural speech detection before amplifying or uploading audio."""
+    audio = np.nan_to_num(np.asarray(audio, dtype=np.float32).reshape(-1)).copy()
+    if len(audio) < MIN_RECORD_SECONDS * SAMPLE_RATE:
+        return np.zeros(0, dtype=np.float32)
+    audio -= np.median(audio)  # Remove microphone DC offset before energy checks
+    frame_size = 320  # 20 ms, independent of the device callback block size
+    padded = np.pad(audio, (0, (-len(audio)) % frame_size))
+    levels = np.sqrt(np.mean(padded.reshape(-1, frame_size) ** 2, axis=1))
+    active = np.flatnonzero(levels >= MIN_VOICE_RMS)
+    if len(active) < 3 or float(np.max(np.abs(audio))) < MIN_VOICE_PEAK:
+        return np.zeros(0, dtype=np.float32)
+    # Detect speech at the original level. Amplifying mic hiss before detection
+    # caused silent recordings to turn into plausible Whisper transcripts.
+    detector = get_speech_detector(_asset_path('silero_vad_v6.onnx'))
+    bounds = detector.speech_bounds(audio)
+    if bounds is None:
+        logging.info("No speech detected by Silero VAD; skipping cloud transcription.")
+        return np.zeros(0, dtype=np.float32)
+    audio = audio[bounds[0]:bounds[1]]
+    peak = float(np.max(np.abs(audio)))
+    active_rms = float(np.sqrt(np.mean(levels[active] ** 2)))
+    gain = max(1.0, min(2.0, 0.025 / max(active_rms, 1e-9), 0.95 / max(peak, 1e-9)))
+    logging.info("Speech accepted: %.2fs, peak=%.4f, active_rms=%.5f, gain=%.2f", len(audio) / SAMPLE_RATE, peak, active_rms, gain)
+    return np.clip(audio * gain, -1.0, 1.0)
+
+
+def call_before_deadline(callback, deadline):
+    """Bound caller latency even when a network operation stalls between reads.
+
+    Late results stay inside this call and can never be typed in another session.
+    Network requests also have transport timeouts and retries disabled.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Speech processing exceeded the 2-second budget. Please try again.")
+    complete = threading.Event()
+    result = []
+    errors = []
+
+    def invoke():
+        try:
+            result.append(callback())
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            complete.set()
+
+    threading.Thread(target=invoke, daemon=True, name="dictation-request").start()
+    if not complete.wait(remaining):
+        raise TimeoutError("Speech processing exceeded the 2-second budget. Please try again.")
+    if errors:
+        raise errors[0]
+    return result[0]
+
+
 # ===================== CLOUD SPEECH-TO-TEXT ENGINE ====================
 class SpeechToTextEngine:
     """High Quality Cloud Speech-to-Text via Groq Whisper Large-v3."""
@@ -689,12 +748,16 @@ class SpeechToTextEngine:
     def reload_keys(self):
         groq_key = load_groq_key()
         self._model = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
+        self._language = os.getenv("GROQ_STT_LANGUAGE", "auto").strip().lower()
+        if self._language not in ("auto", "th", "en"):
+            logging.warning("Unknown STT language; using automatic detection.")
+            self._language = "auto"
         if groq_key:
             self._groq_client = OpenAI(
                 base_url=GROQ_BASE_URL,
                 api_key=groq_key,
-                timeout=12.0,
-                max_retries=1,
+                timeout=PROCESSING_BUDGET_S,
+                max_retries=0,
             )
             logging.info("Groq Cloud Whisper (%s) ready (High Quality Mode).", self._model)
         else:
@@ -713,6 +776,7 @@ class SpeechToTextEngine:
 
         file_tuple = audio_to_wav_file(audio)
         model_to_use = self._model
+        options = {"language": self._language} if self._language != "auto" else {}
 
         try:
             t0 = time.perf_counter()
@@ -722,6 +786,7 @@ class SpeechToTextEngine:
                 file=file_tuple,
                 temperature=0.0,
                 response_format="verbose_json",
+                **options,
             )
         except Exception as exc:
             logging.error("Groq Cloud STT call error: %s", exc)
@@ -733,27 +798,37 @@ class SpeechToTextEngine:
 
         # Non-speech acoustic rejection (humming, throat clearing, mic hiss)
         segments = getattr(res, "segments", []) or []
+        if not segments:
+            logging.warning("STT response has no segment confidence metadata; not typing unverified text.")
+            return "", 1.0, -99.0
         avg_no_speech = 0.0
         avg_logprob = 0.0
         if segments:
-            avg_no_speech = sum(getattr(s, "no_speech_prob", 0.0) for s in segments) / len(segments)
-            avg_logprob = sum(getattr(s, "avg_logprob", 0.0) for s in segments) / len(segments)
+            def value(segment, key, default=0.0):
+                return segment.get(key, default) if isinstance(segment, dict) else getattr(segment, key, default)
 
-            # Strict Hallucination & Noise Gate:
-            # Real speech consistently scores avg_logprob > -0.40.
-            # Hallucinations from noise, breath, or clicks plunge below -0.65.
-            if avg_logprob < -0.65 or avg_no_speech > 0.35:
+            # Filter individual silence segments; a noisy tail must not erase real speech.
+            kept = [s for s in segments if not (
+                value(s, "no_speech_prob", 1.0) is None
+                or value(s, "avg_logprob", -99.0) is None
+                or value(s, "no_speech_prob", 1.0) >= 0.6
+                or value(s, "avg_logprob", -99.0) < -1.0
+                or value(s, "compression_ratio") > 2.4
+            )]
+            if not kept:
                 logging.info(
-                    "Ignored low-confidence hallucination/noise (logprob: %.2f, no_speech: %.2f): '%s'",
-                    avg_logprob,
-                    avg_no_speech,
+                    "Ignored transcript containing only low-confidence silence segments: '%s'",
                     text,
                 )
                 return "", 1.0, -99.0
+            if len(kept) != len(segments) and all(value(s, "text", "").strip() for s in kept):
+                text = " ".join(value(s, "text", "").strip() for s in kept)
+            weights = [max(0.02, value(s, "end") - value(s, "start")) for s in kept]
+            avg_no_speech = sum(value(s, "no_speech_prob") * w for s, w in zip(kept, weights)) / sum(weights)
+            avg_logprob = sum(value(s, "avg_logprob") * w for s, w in zip(kept, weights)) / sum(weights)
 
         clean = text.strip(". \t\n!?\"'«»")
-        if len(clean) <= 1:
-            logging.info("Ignored 1-character artifact: '%s'", text)
+        if not clean:
             return "", 1.0, -99.0
 
         if has_repetitive_loops(text):
@@ -830,7 +905,7 @@ class TextRefiner:
             self._retry_after = time.monotonic() + LOCAL_RETRY_COOLDOWN_S
             return False
 
-    def refine(self, raw: str) -> str:
+    def refine(self, raw: str, deadline: float | None = None) -> str:
         if not raw:
             return ""
 
@@ -843,6 +918,11 @@ class TextRefiner:
             client = self._groq_getter()
             if client is not None:
                 try:
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0.05:
+                            return text
+                        client = client.with_options(timeout=remaining, max_retries=0)
                     t0 = time.perf_counter()
                     res = client.chat.completions.create(
                         model=GROQ_LLM_MODEL,
@@ -864,7 +944,8 @@ class TextRefiner:
                     logging.warning("Groq Cloud LLM refinement error: %s", exc)
 
         # 3. Optional: Local llama.cpp refinement (only if enabled via LOCAL_REFINER=true)
-        if os.getenv("LOCAL_REFINER", "false").lower() in ("true", "1") and self._ensure_loaded():
+        # Local model loading/inference cannot be interrupted within a short deadline.
+        if deadline is None and os.getenv("LOCAL_REFINER", "false").lower() in ("true", "1") and self._ensure_loaded():
             try:
                 t0 = time.perf_counter()
                 max_tok = max(48, min(160, int(len(raw) * 0.8)))
@@ -1034,10 +1115,10 @@ class ProcessingThread(QThread):
         self._target_hwnd = target_hwnd
 
     def run(self):
+        deadline = time.monotonic() + PROCESSING_BUDGET_S
         try:
             if not self._stt.is_ready:
-                logging.warning("Groq STT not ready. Skipping silently.")
-                self.done.emit("")
+                self.failed.emit("GROQ_API_KEY not found. Open Edit API Keys from the tray menu.")
                 return
 
             if self._target_hwnd and not is_text_target_available(self._target_hwnd):
@@ -1045,14 +1126,18 @@ class ProcessingThread(QThread):
                 self.done.emit("")
                 return
 
-            raw, no_speech, logprob = self._stt.transcribe(self._audio)
+            def recognize():
+                audio = prepare_speech_audio(self._audio)
+                return self._stt.transcribe(audio) if len(audio) else ("", 1.0, -99.0)
+
+            raw, no_speech, logprob = call_before_deadline(recognize, deadline)
             if not raw or not raw.strip():
                 logging.info("STT returned empty text. Skipping refiner & finishing silently.")
                 self.done.emit("")
                 return
 
-            # Whisper doubt: low logprob or high no-speech probability
-            acoustic_doubt = no_speech > 0.10 or logprob < -0.45
+            # Require both acoustic signals before suppressing common spoken phrases.
+            acoustic_doubt = no_speech > 0.2 or logprob < -0.6
 
             def _is_hallucination(text: str) -> bool:
                 if is_provider_credit(text):
@@ -1075,14 +1160,20 @@ class ProcessingThread(QThread):
                 self.done.emit("")
                 return
 
-            final_text = self._refiner.refine(raw)
+            # Always retain a usable transcript if optional proofreading runs out of time.
+            final_text = format_tech_casing(format_spacing(raw))
+            if deadline - time.monotonic() > 0.05:
+                try:
+                    final_text = call_before_deadline(lambda: self._refiner.refine(raw, deadline=deadline), deadline)
+                except Exception as exc:
+                    logging.info("Using original transcript; optional refinement skipped: %s", exc)
             if _is_hallucination(final_text):
                 self.done.emit("")
                 return
             self.done.emit(final_text)
         except Exception as exc:
-            logging.warning("Processing error (handled silently): %s", exc)
-            self.done.emit("")
+            logging.warning("Processing failed: %s", exc)
+            self.failed.emit(str(exc))
 
 
 # ==================== MINIMAL FLOATING CAPSULE OVERLAY ====================
@@ -1590,6 +1681,11 @@ class G4SpeakApp(QObject):
         self._last_press_time = 0.0
 
         self.stt = SpeechToTextEngine()
+        try:
+            get_speech_detector(_asset_path('silero_vad_v6.onnx'))
+        except Exception as exc:
+            # Never fall back to energy-only detection if the speech model is unavailable.
+            logging.error("Speech detector unavailable: %s", exc)
         self.refiner = TextRefiner(groq_client_getter=lambda: self.stt._groq_client)
         self.overlay = Overlay()
         self._record_id = 0
@@ -1627,6 +1723,16 @@ class G4SpeakApp(QObject):
         menu = QMenu()
         menu.addAction("Edit API Keys...").triggered.connect(self._edit_keys)
         menu.addAction("Reload API Keys").triggered.connect(self._reload_keys)
+        language_menu = menu.addMenu("Dictation language")
+        self._language_group = QActionGroup(self)
+        self._language_group.setExclusive(True)
+        for language, label in (("auto", "Auto: Thai / English"), ("th", "Thai (English words supported)"), ("en", "English")):
+            action = language_menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(language)
+            action.setChecked(self.stt._language == language)
+            self._language_group.addAction(action)
+        self._language_group.triggered.connect(self._set_dictation_language)
         menu.addSeparator()
         self._autostart_action = menu.addAction("Run at Startup")
         self._autostart_action.setCheckable(True)
@@ -1667,6 +1773,8 @@ class G4SpeakApp(QObject):
         load_env_file()
         self.stt.reload_keys()
         self.refiner.reload_keys()
+        for action in self._language_group.actions():
+            action.setChecked(action.data() == self.stt._language)
         groq_status = f"ready ({self.stt._model})" if self.stt.is_ready else "missing or invalid key"
         self.tray.showMessage(
             APP_NAME,
@@ -1674,6 +1782,14 @@ class G4SpeakApp(QObject):
             QSystemTrayIcon.MessageIcon.Information,
             3500,
         )
+
+    def _set_dictation_language(self, action):
+        try:
+            ensure_env_file()
+            set_key(str(ENV_FILE), "GROQ_STT_LANGUAGE", action.data())
+            self._reload_keys()
+        except OSError as exc:
+            self._notify_error(f"Could not save dictation language: {exc}")
 
     def _toggle_autostart(self, checked: bool):
         try:
@@ -1760,8 +1876,9 @@ class G4SpeakApp(QObject):
         self.is_locked = False
         self.overlay.set_locked(False)
         if self._recorder is not None:
-            self._recorder.stop()
-            logging.info("Recording stopped, processing speech...")
+            session = self._record_id
+            QTimer.singleShot(RECORD_TAIL_MS, lambda: self._recorder.stop(expected_session=session))
+            logging.info("Draining microphone tail, then processing speech...")
 
     def _cancel_recording(self):
         logging.info("Recording cancelled by user.")
@@ -1780,23 +1897,6 @@ class G4SpeakApp(QObject):
         if session != self._record_id or self.state not in (RECORDING, STOPPING):
             logging.info("Stale audio dropped (already idle/cancelled).")
             return
-        # Discard accidental key taps shorter than 0.60 seconds
-        if len(audio) < MIN_RECORD_SECONDS * SAMPLE_RATE:
-            logging.info("Audio too short (%.2fs < %.2fs). Ignored accidental tap.",
-                         len(audio) / SAMPLE_RATE, MIN_RECORD_SECONDS)
-            self._finish_idle()
-            return
-
-        # Voice Activity Detection (VAD) Energy Check
-        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-        rms = float(np.sqrt(np.mean(audio * audio))) if len(audio) else 0.0
-        # Discard micro-noise, keyclicks, and silence
-        if peak < MIN_VOICE_PEAK or rms < MIN_VOICE_RMS:
-            logging.info("No speech detected (peak: %.4f < %.4f, rms: %.5f < %.5f). Ignored noise/silence.",
-                         peak, MIN_VOICE_PEAK, rms, MIN_VOICE_RMS)
-            self._finish_idle()
-            return
-
         target_hwnd = self._prev_hwnd
         if not is_text_target_available(target_hwnd):
             cur_fg = get_foreground_window()
@@ -1836,7 +1936,7 @@ class G4SpeakApp(QObject):
     def _on_failure(self, msg: str, pid: int):
         if pid != self._proc_id:
             return
-        logging.warning("G4Speak silent bypass on failure: %s", msg)
+        self._notify_error(msg)
         self._finish_idle()
 
     def _finish_idle(self):

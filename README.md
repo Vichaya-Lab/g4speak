@@ -57,11 +57,24 @@ Grab `G4Speak.exe` from [Releases](https://github.com/Vichaya-Lab/g4speak/releas
 
 The microphone stays open while G4Speak is running so dictation starts promptly. Audio outside an active recording is discarded and is never sent to the API.
 
+Dictation removes DC offset and uses the bundled Silero VAD v6 neural model locally to distinguish speech from silence, hiss, hum, and clicks before uploading. Only recordings with sustained speech are sent for recognition. Outer silence is trimmed with context and gain is capped at 2x after speech detection. If the VAD model fails, recognition stops with a notification instead of bypassing the check. TV or other people's speech can still pass a voice detector.
+
+Use `GROQ_STT_MODEL=whisper-large-v3` for multilingual accuracy. Set `GROQ_STT_LANGUAGE=auto` (default) to switch between Thai and English; `th` or `en` provides a language hint for single-language sessions. Reload API Keys after editing `.env`.
+
+You can also choose **Dictation language** from the tray menu. **Thai (English words supported)** provides a Thai language hint for mainly Thai sentences containing English terms; use **English** for English dictation or **Auto** to switch freely. Language hints can reduce language-detection errors but do not guarantee correct words.
+
+Recognition rejects individual segments with high no-speech probability, very low confidence, or excessive repetition. Responses missing segment confidence metadata are discarded. A confident-looking transcript alone cannot bypass local speech detection.
+
+Processing has a 1.8-second budget, plus a 96 ms microphone tail and text insertion, targeting roughly 2 seconds after release. API retries are disabled. Optional proofreading falls back to the transcript when its time runs out. If recognition itself times out or fails, a tray notification appears; late results are discarded. Network/server latency can prevent a transcript within this budget; successful transcription and accuracy are not guaranteed within 2 seconds.
+
+The bounded dictation pipeline skips the optional local LLM because local loading and inference cannot be interrupted reliably within this budget.
+
 ## Tray Menu
 
 Right-click the icon by the Windows clock:
 - **Edit API Keys...** — Opens `.env` in Notepad.
 - **Reload API Keys** — Updates keys without restarting.
+- **Dictation language** — Choose Auto, Thai, or English; the choice is saved in `.env`.
 - **Run at Startup** — Toggle Windows autostart.
 - **Quit G4Speak** — Exit application.
 
@@ -80,7 +93,7 @@ python main.py
 
 Run test suite:
 ```bash
-python tests/test_guards.py
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
 Build standalone `.exe`:

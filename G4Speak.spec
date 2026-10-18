@@ -19,7 +19,7 @@ a = Analysis(
     excludes=[
         'PyQt5', 'PyQt6', 'PySide2',
         'torch', 'scipy', 'matplotlib', 'sympy', 'tensorflow',
-        'cv2', 'numba', 'llvmlite', 'onnxruntime',
+        'cv2', 'numba', 'llvmlite',
         'faster_whisper', 'sherpa_onnx', 'keyboard',
         'transformers', 'huggingface_hub', 'anthropic',
         'av', 'ctranslate2', 'mediapipe',
