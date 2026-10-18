@@ -25,7 +25,7 @@
 ### Controls
 - **Hold `Ctrl + Space`**: Speak while holding; release to finish and type.
 - **Double-tap `Ctrl + Space`** (or click the bar): Hands-free lock mode. Tap `Ctrl + Space` again or click to stop and type.
-- **`Esc`**: Cancel recording without typing anything.
+- **`Esc`**: Cancel recording or processing without typing anything.
 
 ---
 
@@ -42,11 +42,13 @@
 ## Getting Started
 
 ### 1. Download
-Grab `G4Speak.exe` from [Releases](https://github.com/Vichaya-Lab/g4speak/releases).
+Download **G4Speak-Setup-1.2.1.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
+
+To update, run the newer Setup. Your API settings and Dictionary are preserved. Uninstall from **Settings > Apps > Installed apps > G4Speak**; personal settings are retained for reinstallation. `G4Speak.exe` is also available as a portable download. `SHA256SUMS.txt` contains checksums for both files.
 
 ### 2. Add API Key
 1. Get a free API key at [console.groq.com/keys](https://console.groq.com/keys).
-2. Run `G4Speak.exe`, right-click the tray icon > **Edit API Keys...**.
+2. Open G4Speak from the Start Menu, then right-click the tray icon > **Edit API Keys...**.
 3. Paste your key in `.env` and save:
    ```env
    GROQ_API_KEY=gsk_your_key_here
@@ -65,7 +67,9 @@ You can also choose **Dictation language** from the tray menu. **Thai (English w
 
 Recognition rejects individual segments with high no-speech probability, very low confidence, or excessive repetition. Responses missing segment confidence metadata are discarded. A confident-looking transcript alone cannot bypass local speech detection.
 
-Processing has a 1.8-second budget, plus a 96 ms microphone tail and text insertion, targeting roughly 2 seconds after release. API retries are disabled. Optional proofreading falls back to the transcript when its time runs out. If recognition itself times out or fails, a tray notification appears; late results are discarded. Network/server latency can prevent a transcript within this budget; successful transcription and accuracy are not guaranteed within 2 seconds.
+Record for up to 10 minutes per session. Short words and recordings around one second are also accepted when local speech detection confirms speech. Recognition gets 30 seconds plus a quarter of the recording duration, capped at 180 seconds, including audio preparation and upload. The API request uses the remaining allowance instead of a fixed short timeout. These are maximum waits, not required recording lengths; results appear as soon as they are ready. API retries are disabled. Optional proofreading gets at most 350 ms within that limit and falls back to the transcript on timeout. Press **Esc** to cancel processing; late results are discarded. If recognition times out or fails, a tray notification appears. Low-confidence standalone phrases such as "Thank you" are filtered, while confidently spoken phrases are preserved.
+
+Local speech detection processes bounded batches while carrying the model's recurrent state between batches, avoiding one large inference allocation for long recordings. Ten minutes of 16 kHz mono PCM WAV is approximately 19.2 MB, below Groq's documented 25 MB free-tier upload limit. Server load, connectivity, and account rate limits can still affect recognition. See [Groq speech-to-text documentation](https://console.groq.com/docs/speech-to-text).
 
 The bounded dictation pipeline skips the optional local LLM because local loading and inference cannot be interrupted reliably within this budget.
 
@@ -74,9 +78,18 @@ The bounded dictation pipeline skips the optional local LLM because local loadin
 Right-click the icon by the Windows clock:
 - **Edit API Keys...** — Opens `.env` in Notepad.
 - **Reload API Keys** — Updates keys without restarting.
+- **Dictionary...** — Save the names, brands, and words you use.
 - **Dictation language** — Choose Auto, Thai, or English; the choice is saved in `.env`.
 - **Run at Startup** — Toggle Windows autostart.
 - **Quit G4Speak** — Exit application.
+
+## Personal dictionary
+
+Right-click the tray icon and choose **Dictionary...**. Enter only the desired spellings, one word or phrase per line, such as a name, a specialized term, or a phrase you use. Click **Save** to apply changes immediately. Edit or remove lines to update the list; **Cancel** discards unsaved edits. The editor and its labels are in English; vocabulary can use Thai, English, or other languages.
+
+Words are saved locally in `%APPDATA%\G4Speak\dictionary.json` and survive app restarts and EXE updates. Up to 500 words or phrases are supported, with a maximum of 200 characters each. Duplicates are rejected. Existing dictionaries in the old correction-pair format retain the desired spellings automatically; no incorrect spellings are required.
+
+A short vocabulary hint is sent with speech-verified audio to guide recognition. Put your most important words first: hints include whole entries in list order up to a conservative 200 UTF-8 byte budget to stay below the provider's prompt limit. Longer entries that do not fit are skipped; all saved words still participate in local casing corrections. Empty dictionaries send no hint. This guides spelling rather than training the model and does not guarantee correct recognition. Local speech detection and transcript confidence filters remain enabled. After proofreading (or its timeout fallback), exact matches use your preferred casing without guessing replacements for unrelated words.
 
 ---
 
@@ -96,12 +109,12 @@ Run test suite:
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-Build standalone `.exe`:
+Build the portable app and Windows Setup (downloads and verifies Inno Setup 6.7.3 on the first build):
 ```cmd
 build.bat
 ```
 
-Output binary is saved to `dist/G4Speak.exe`.
+Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.2.1.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File packaging/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
 
 ---
 

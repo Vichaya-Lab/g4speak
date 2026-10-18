@@ -37,6 +37,7 @@ exe = EXE(
     a.datas,
     [],
     name='G4Speak',
+    version='packaging/windows-version.txt',
     icon='assets/logo.ico',
     debug=False,
     bootloader_ignore_signals=False,

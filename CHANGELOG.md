@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] - 2026-10-18
+
+- Add an English Windows Setup for per-user installation without administrator rights, a Start Menu shortcut, optional desktop shortcut, and Windows uninstall support. Preserve API settings and personal vocabulary on upgrades and uninstall. Include installer and portable EXE checksums in releases.
+- Add a minimal English dictionary editor: enter only desired words, one per line. Persist locally, migrate desired spellings from old correction pairs, send bounded spelling hints only after speech detection, and preserve preferred casing after proofreading.
+- Fix Windows regression test discovery failing under cp1252 by moving guard checks into unittest without printing Thai text during imports.
+- Extend recording sessions to 10 minutes and scale recognition time from 30 to 180 seconds with duration, passing the remaining deadline to the API. Process local speech detection in bounded batches. Keep optional refinement capped at 350 ms; allow cancellation during processing and discard late results.
+- Filter low-confidence standalone thanks phrases while preserving confident dictation and local speech detection.
+
 ## [1.2] - 2026-10-18
 
 - Detect speech locally with the bundled Silero VAD v6 model before uploading audio; silence, hiss, hum, and clicks no longer pass on energy alone. Stop recognition if the detector is unavailable.

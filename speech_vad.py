@@ -20,14 +20,22 @@ class SpeechDetector:
     def probabilities(self, audio):
         # Sequence model uses 512 fresh samples plus 64 previous samples per frame.
         frames = np.pad(audio, (0, (-len(audio)) % 512)).reshape(-1, 512)
-        context = np.zeros((len(frames), 64), dtype=np.float32)
-        context[1:] = frames[:-1, -64:]
-        inputs = np.concatenate([context, frames], axis=1).astype(np.float32)
         state = np.zeros((1, 1, 128), dtype=np.float32)
         # Both recurrent states are reset for every recording, including after silence.
+        h, c = state, state.copy()
+        probabilities = []
         with self.lock:
-            scores, _, _ = self.session.run(None, {'input': inputs, 'h': state, 'c': state.copy()})
-        return np.asarray(scores).reshape(-1)
+            # Bound inference memory for long dictations while preserving recurrent context.
+            for start in range(0, len(frames), 256):
+                chunk = frames[start:start + 256]
+                context = np.zeros((len(chunk), 64), dtype=np.float32)
+                if start:
+                    context[0] = frames[start - 1, -64:]
+                context[1:] = chunk[:-1, -64:]
+                inputs = np.concatenate([context, chunk], axis=1).astype(np.float32)
+                scores, h, c = self.session.run(None, {'input': inputs, 'h': h, 'c': c})
+                probabilities.append(np.asarray(scores).reshape(-1))
+        return np.concatenate(probabilities) if probabilities else np.zeros(0, dtype=np.float32)
 
     def speech_bounds(self, audio):
         scores = self.probabilities(audio)

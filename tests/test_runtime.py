@@ -13,6 +13,16 @@ class RegressionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = main.QApplication.instance() or main.QApplication([])
 
+    def test_installer_mutex_prevents_duplicate_instances(self):
+        mutex = main.kernel32.CreateMutexW(None, False, r'Local\G4Speak.App')
+        self.assertTrue(mutex)
+        try:
+            with patch.object(main, 'run_application') as launch:
+                main.main()
+                launch.assert_not_called()
+        finally:
+            main.kernel32.CloseHandle(mutex)
+
     def test_recording_sessions_discard_idle_cancel_and_stale_audio(self):
         recorder = main.RecorderThread()
         results = []

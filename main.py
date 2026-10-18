@@ -14,6 +14,7 @@ Licensed under the MIT License. See LICENSE.
 """
 
 import ctypes
+from concurrent.futures import CancelledError
 from ctypes import wintypes
 import difflib
 import io
@@ -37,6 +38,8 @@ import sounddevice as sd
 from dotenv import load_dotenv, set_key
 from openai import OpenAI
 from speech_vad import get_speech_detector
+from personal_dictionary import PersonalDictionary
+from dictionary_dialog import DictionaryDialog
 from PySide6.QtCore import (QEasingCurve, QFileInfo, QObject, QPointF,
                           Property, QPropertyAnimation, QRectF, Qt, QThread,
                           QTimer, Signal)
@@ -46,7 +49,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.2"
+APP_VERSION = "1.2.1"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -98,12 +101,14 @@ CTRL_RELEASE_MIN_S = 0.35                           # Ctrl released after this l
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BLOCK_SIZE = 512                                    # 32 ms per chunk at 16 kHz
-MAX_RECORD_SECONDS = 60
+MAX_RECORD_SECONDS = 600                            # Ten minutes; 16 kHz PCM WAV stays below 25 MB
 MIN_RECORD_SECONDS = 0.16                           # Keep short words such as yes/no
 MIN_VOICE_PEAK = 0.0015
 MIN_VOICE_RMS = 0.00035
 RECORD_TAIL_MS = 96                                 # Drain microphone latency after key release
-PROCESSING_BUDGET_S = 1.80                          # Leaves time for capture tail and text insertion
+PROCESSING_BUDGET_S = 30.0                          # Base allowance for preparation, upload, and recognition
+MAX_PROCESSING_BUDGET_S = 180.0
+REFINEMENT_BUDGET_S = 0.35                          # Optional proofreading must not delay usable text
 AUDIO_DEVICE = None                                 # None = default mic
 
 # Floating capsule dimensions (super compact)
@@ -150,6 +155,9 @@ _SILENCE_LOWER = frozenset({
     "subtitles by",
 })
 
+# These can be real dictation; suppress only when acoustic confidence is weak.
+_SHORT_SILENCE_PHRASES = frozenset({"thank you", "thanks", "ขอบคุณ", "ขอบคุณครับ", "ขอบคุณค่ะ"})
+
 _HUM_RE = re.compile(
     r"^[\u0e2e\u0e2d\u0e2b][\u0e37\u0e36\u0e34\u0e38\u0e39\u0e30\u0e32\u0e48\u0e49\u0e4a\u0e4b\u0e21\u0e23\s\.\,\-]+$"
 )
@@ -166,7 +174,7 @@ def is_silence_hallucination(text: str, strict: bool = True) -> bool:
         return False
     if clean in SILENCE_HALLUCINATIONS:
         return True
-    if clean.casefold() in _SILENCE_LOWER:
+    if clean.casefold() in _SILENCE_LOWER | _SHORT_SILENCE_PHRASES:
         return True
     return False
 
@@ -221,6 +229,10 @@ IDLE, RECORDING, STOPPING, PROCESSING = "idle", "recording", "stopping", "proces
 # ========================= WINDOWS API HELPERS =======================
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.CreateMutexW.restype = wintypes.HANDLE
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
 
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
@@ -707,15 +719,22 @@ def prepare_speech_audio(audio: np.ndarray) -> np.ndarray:
     return np.clip(audio * gain, -1.0, 1.0)
 
 
-def call_before_deadline(callback, deadline):
+def processing_budget(audio_seconds):
+    """Longer recordings need more upload and recognition time."""
+    return min(MAX_PROCESSING_BUDGET_S, PROCESSING_BUDGET_S + max(0.0, audio_seconds) * 0.25)
+
+
+def call_before_deadline(callback, deadline, cancelled=None):
     """Bound caller latency even when a network operation stalls between reads.
 
     Late results stay inside this call and can never be typed in another session.
     Network requests also have transport timeouts and retries disabled.
     """
     remaining = deadline - time.monotonic()
+    if cancelled is not None and cancelled.is_set():
+        raise CancelledError()
     if remaining <= 0:
-        raise TimeoutError("Speech processing exceeded the 2-second budget. Please try again.")
+        raise TimeoutError("Speech recognition timed out waiting for a result. Please try again; you do not need to record longer.")
     complete = threading.Event()
     result = []
     errors = []
@@ -729,8 +748,17 @@ def call_before_deadline(callback, deadline):
             complete.set()
 
     threading.Thread(target=invoke, daemon=True, name="dictation-request").start()
-    if not complete.wait(remaining):
-        raise TimeoutError("Speech processing exceeded the 2-second budget. Please try again.")
+    while not complete.is_set():
+        if cancelled is not None and cancelled.is_set():
+            raise CancelledError()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Speech recognition timed out waiting for a result. Please try again; you do not need to record longer.")
+        complete.wait(min(remaining, 0.05))
+    if cancelled is not None and cancelled.is_set():
+        raise CancelledError()
+    if time.monotonic() > deadline:
+        raise TimeoutError("Speech recognition timed out waiting for a result. Please try again; you do not need to record longer.")
     if errors:
         raise errors[0]
     return result[0]
@@ -770,17 +798,20 @@ class SpeechToTextEngine:
     def is_ready(self) -> bool:
         return self._groq_client is not None
 
-    def transcribe(self, audio: np.ndarray) -> tuple[str, float, float]:
+    def transcribe(self, audio: np.ndarray, *, timeout=None, vocabulary="") -> tuple[str, float, float]:
         if self._groq_client is None:
             raise RuntimeError("GROQ_API_KEY not found. Right-click tray icon and choose Edit API Keys")
 
         file_tuple = audio_to_wav_file(audio)
         model_to_use = self._model
         options = {"language": self._language} if self._language != "auto" else {}
+        options["timeout"] = timeout if timeout is not None else processing_budget(len(audio) / SAMPLE_RATE)
+        if vocabulary:
+            options["prompt"] = vocabulary
 
         try:
             t0 = time.perf_counter()
-            # Do NOT pass noisy keyword prompts to Whisper; omitting prompt avoids prompt repetition/leakage!
+            # Only user-supplied vocabulary goes into the spelling hint, never generic instructions.
             res = self._groq_client.audio.transcriptions.create(
                 model=model_to_use,
                 file=file_tuple,
@@ -1107,15 +1138,20 @@ class ProcessingThread(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, audio: np.ndarray, stt: SpeechToTextEngine, refiner: TextRefiner, target_hwnd: int = 0):
+    def __init__(self, audio: np.ndarray, stt: SpeechToTextEngine, refiner: TextRefiner, target_hwnd: int = 0, dictionary=None):
         super().__init__()
         self._audio = audio
         self._stt = stt
         self._refiner = refiner
         self._target_hwnd = target_hwnd
+        self._dictionary = dictionary
+        self._cancelled = threading.Event()
+
+    def cancel(self):
+        self._cancelled.set()
 
     def run(self):
-        deadline = time.monotonic() + PROCESSING_BUDGET_S
+        deadline = time.monotonic() + processing_budget(len(self._audio) / SAMPLE_RATE)
         try:
             if not self._stt.is_ready:
                 self.failed.emit("GROQ_API_KEY not found. Open Edit API Keys from the tray menu.")
@@ -1128,15 +1164,23 @@ class ProcessingThread(QThread):
 
             def recognize():
                 audio = prepare_speech_audio(self._audio)
-                return self._stt.transcribe(audio) if len(audio) else ("", 1.0, -99.0)
+                if self._cancelled.is_set():
+                    raise CancelledError()
+                if not len(audio):
+                    return "", 1.0, -99.0
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Speech recognition timed out. Please try again.")
+                vocabulary = self._dictionary.prompt() if self._dictionary is not None else ""
+                return self._stt.transcribe(audio, timeout=remaining, vocabulary=vocabulary)
 
-            raw, no_speech, logprob = call_before_deadline(recognize, deadline)
+            raw, no_speech, logprob = call_before_deadline(recognize, deadline, self._cancelled)
             if not raw or not raw.strip():
                 logging.info("STT returned empty text. Skipping refiner & finishing silently.")
                 self.done.emit("")
                 return
 
-            # Require both acoustic signals before suppressing common spoken phrases.
+            # Either weak acoustic signal makes common hallucination phrases suspect.
             acoustic_doubt = no_speech > 0.2 or logprob < -0.6
 
             def _is_hallucination(text: str) -> bool:
@@ -1164,13 +1208,21 @@ class ProcessingThread(QThread):
             final_text = format_tech_casing(format_spacing(raw))
             if deadline - time.monotonic() > 0.05:
                 try:
-                    final_text = call_before_deadline(lambda: self._refiner.refine(raw, deadline=deadline), deadline)
+                    refine_deadline = min(deadline, time.monotonic() + REFINEMENT_BUDGET_S)
+                    final_text = call_before_deadline(lambda: self._refiner.refine(raw, deadline=refine_deadline), refine_deadline, self._cancelled)
+                except CancelledError:
+                    raise
                 except Exception as exc:
                     logging.info("Using original transcript; optional refinement skipped: %s", exc)
             if _is_hallucination(final_text):
                 self.done.emit("")
                 return
-            self.done.emit(final_text)
+            if self._dictionary is not None:
+                final_text = format_spacing(self._dictionary.apply(final_text))
+            if not self._cancelled.is_set():
+                self.done.emit(final_text)
+        except CancelledError:
+            logging.info("Speech processing cancelled; late results discarded.")
         except Exception as exc:
             logging.warning("Processing failed: %s", exc)
             self.failed.emit(str(exc))
@@ -1687,6 +1739,10 @@ class G4SpeakApp(QObject):
             # Never fall back to energy-only detection if the speech model is unavailable.
             logging.error("Speech detector unavailable: %s", exc)
         self.refiner = TextRefiner(groq_client_getter=lambda: self.stt._groq_client)
+        self.dictionary = PersonalDictionary(
+            Path(os.environ.get("APPDATA", str(Path.home()))) / "G4Speak" / "dictionary.json"
+        )
+        self._dictionary_dialog = None
         self.overlay = Overlay()
         self._record_id = 0
         self._recorder = RecorderThread()
@@ -1723,6 +1779,7 @@ class G4SpeakApp(QObject):
         menu = QMenu()
         menu.addAction("Edit API Keys...").triggered.connect(self._edit_keys)
         menu.addAction("Reload API Keys").triggered.connect(self._reload_keys)
+        menu.addAction("Dictionary...").triggered.connect(self._edit_dictionary)
         language_menu = menu.addMenu("Dictation language")
         self._language_group = QActionGroup(self)
         self._language_group.setExclusive(True)
@@ -1755,6 +1812,7 @@ class G4SpeakApp(QObject):
                 pass
         if self._worker is not None:
             try:
+                self._worker.cancel()
                 self._wait(self._worker)
             except Exception:
                 pass
@@ -1768,6 +1826,20 @@ class G4SpeakApp(QObject):
     def _edit_keys(self):
         ensure_env_file()
         subprocess.Popen(["notepad.exe", str(ENV_FILE)])
+
+    def _edit_dictionary(self):
+        if self._dictionary_dialog is None:
+            self._dictionary_dialog = DictionaryDialog(self.dictionary)
+            self._dictionary_dialog.finished.connect(self._dictionary_closed)
+        self._dictionary_dialog.show()
+        self._dictionary_dialog.raise_()
+        self._dictionary_dialog.activateWindow()
+
+    def _dictionary_closed(self, result):
+        dialog = self._dictionary_dialog
+        self._dictionary_dialog = None
+        if dialog is not None:
+            dialog.deleteLater()
 
     def _reload_keys(self):
         load_env_file()
@@ -1883,6 +1955,8 @@ class G4SpeakApp(QObject):
     def _cancel_recording(self):
         logging.info("Recording cancelled by user.")
         self._proc_id += 1
+        if self._worker is not None:
+            self._worker.cancel()
         self._grace_timer.stop()
         if self._recorder is not None:
             self._recorder.stop(discard=True)
@@ -1914,7 +1988,7 @@ class G4SpeakApp(QObject):
         self._wait(self._worker)
         self._proc_id += 1
         pid = self._proc_id
-        self._worker = ProcessingThread(audio, self.stt, self.refiner, target_hwnd=target_hwnd)
+        self._worker = ProcessingThread(audio, self.stt, self.refiner, target_hwnd=target_hwnd, dictionary=self.dictionary)
         self._worker.done.connect(lambda t, _pid=pid: self._on_done(t, _pid))
         self._worker.failed.connect(lambda m, _pid=pid: self._on_failure(m, _pid))
         self._worker.start()
@@ -1947,6 +2021,20 @@ class G4SpeakApp(QObject):
 
 
 def main():
+    # Installer checks the same mutex before updating or uninstalling the app.
+    mutex = kernel32.CreateMutexW(None, False, r"Local\G4Speak.App")
+    if not mutex:
+        raise ctypes.WinError()
+    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(mutex)
+        return
+    try:
+        run_application()
+    finally:
+        kernel32.CloseHandle(mutex)
+
+
+def run_application():
     if sys.platform == "win32":
         os.environ.setdefault("QT_QPA_PLATFORM", "windows:dpiawareness=1")
     ensure_env_file()
@@ -1975,4 +2063,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--smoke-test" in sys.argv:
+        import tempfile
+        # Validate the installed bundle without opening a microphone, loading keys,
+        # writing user settings, installing hooks, or calling a remote service.
+        assert APP_VERSION
+        assert APP_ICON.is_file()
+        get_speech_detector(_asset_path('silero_vad_v6.onnx'))
+        app = QApplication([sys.argv[0]])
+        with tempfile.TemporaryDirectory() as directory:
+            dictionary = PersonalDictionary(Path(directory) / 'dictionary.json')
+            dialog = DictionaryDialog(dictionary)
+            dialog.close()
+    else:
+        main()
