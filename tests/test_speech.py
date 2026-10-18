@@ -12,9 +12,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import main
-from personal_dictionary import PersonalDictionary
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from g4speak import app as main
+from g4speak.text.dictionary import PersonalDictionary
 
 
 class SpeechTests(unittest.TestCase):
@@ -243,7 +243,7 @@ class SpeechTests(unittest.TestCase):
     def test_slow_refiner_falls_back_to_transcript(self):
         release = threading.Event()
         stt = SimpleNamespace(is_ready=True, transcribe=lambda audio, **kwargs: ('hello world', 0, 0))
-        refiner = SimpleNamespace(refine=lambda raw, deadline: release.wait(2))
+        refiner = SimpleNamespace(refine=lambda raw, deadline, **kwargs: release.wait(2))
         worker, done, failed = self.worker(stt, refiner)
         worker._dictionary = MagicMock()
         worker._dictionary.apply.side_effect = lambda text: text.replace('hello', 'Hi')

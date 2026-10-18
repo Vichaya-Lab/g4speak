@@ -6,14 +6,14 @@ if (-not $Compiler) {
 }
 python -m unittest discover -s tests -p 'test_*.py'
 if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
-python -m PyInstaller --noconfirm G4Speak.spec
+python -m PyInstaller --noconfirm packaging/windows/G4Speak.spec
 if ($LASTEXITCODE -ne 0) { throw 'Application build failed.' }
 $version = (Get-Item -LiteralPath 'dist\G4Speak.exe').VersionInfo.ProductVersion
 if (-not $version) { throw 'Application version metadata is missing.' }
 if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
     throw "Release tag $env:GITHUB_REF_NAME does not match application version $version."
 }
-& $Compiler '/Qp' (Join-Path $PSScriptRoot 'windows.iss')
+& $Compiler '/Qp' (Join-Path $PSScriptRoot '..\packaging\windows\installer.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 $installer = "dist\G4Speak-Setup-$version.exe"
 if (-not (Test-Path -LiteralPath $installer)) { throw 'Installer version does not match the application.' }

@@ -1,0 +1,2 @@
+# Legacy source-only local refinement. Not used by the bounded Windows app.
+llama-cpp-python==0.3.36

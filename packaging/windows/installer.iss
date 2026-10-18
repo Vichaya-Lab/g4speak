@@ -1,4 +1,4 @@
-#define AppVersion "1.2.1"
+#define AppVersion "1.2.2"
 
 [Setup]
 AppId={{B3F29956-3D69-4994-9B8D-84317FD5C621}
@@ -19,13 +19,13 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=no
 WizardStyle=modern
-SetupIconFile=..\assets\logo.ico
+SetupIconFile=..\..\assets\logo.ico
 UninstallDisplayIcon={app}\G4Speak.exe
 UninstallDisplayName=G4Speak
 AppMutex=Local\G4Speak.App
 CloseApplications=no
 RestartApplications=no
-OutputDir=..\dist
+OutputDir=..\..\dist
 OutputBaseFilename=G4Speak-Setup-{#AppVersion}
 Compression=lzma2/fast
 SolidCompression=yes
@@ -37,8 +37,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
-Source: "..\dist\G4Speak.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist\G4Speak.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{userprograms}\G4Speak"; Filename: "{app}\G4Speak.exe"; WorkingDir: "{app}"

@@ -25,5 +25,5 @@ Run them before every pull request.
 ## Pull requests
 
 1. Fork, branch from `main`, keep changes focused.
-2. Update `README.md` / `CHANGELOG.md` if behavior changes.
+2. Update `README.md` / `docs/CHANGELOG.md` if behavior changes.
 3. One logical change per PR. CI builds the exe on `v*` tags only.

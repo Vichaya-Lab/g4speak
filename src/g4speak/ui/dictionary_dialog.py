@@ -9,23 +9,23 @@ class DictionaryDialog(QDialog):
     def __init__(self, dictionary, parent=None):
         super().__init__(parent)
         self.dictionary = dictionary
-        self.setWindowTitle("Dictionary - G4Speak")
+        self.setWindowTitle("Personal Dictionary - G4Speak")
         self.resize(420, 420)
         self.setMinimumSize(360, 320)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
 
-        title = QLabel("Dictionary")
+        title = QLabel("Personal Dictionary")
         font = title.font()
         font.setPointSize(17)
         font.setBold(True)
         title.setFont(font)
         layout.addWidget(title)
-        layout.addWidget(QLabel("Add one word or phrase per line."))
+        layout.addWidget(QLabel("Enter a preferred spelling on each line."))
         self.editor = QPlainTextEdit()
-        self.editor.setAccessibleName("Dictionary words")
-        self.editor.setToolTip("Put your most important words first. Recognition uses a short vocabulary hint.")
+        self.editor.setAccessibleName("Preferred words and phrases")
+        self.editor.setToolTip("List frequently used words first to prioritize recognition.")
         self.editor.setPlaceholderText("Example name\nExample term\nExample phrase")
         self.editor.setPlainText("\n".join(dictionary.words))
         self.editor.setTabChangesFocus(True)
@@ -38,7 +38,7 @@ class DictionaryDialog(QDialog):
         self.error_label.hide()
         layout.addWidget(self.error_label)
         if dictionary.load_error:
-            self._show_error("Could not load your dictionary. Check the file before saving over it.")
+            self._show_error("Your saved dictionary could not be opened. Please check the file before saving changes.")
 
         footer = QHBoxLayout()
         self.count_label = QLabel()

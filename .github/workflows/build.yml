@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -25,18 +26,21 @@ jobs:
 
       - name: Build app and Setup
         shell: pwsh
-        run: ./packaging/build-release.ps1
+        run: ./scripts/build-release.ps1
 
       - name: Verify install, upgrade, and uninstall
         shell: pwsh
-        run: ./packaging/smoke-test.ps1
+        run: |
+          $previousSetup = Join-Path $env:RUNNER_TEMP 'G4Speak-Setup-1.2.1.exe'
+          Invoke-WebRequest -Uri 'https://github.com/Vichaya-Lab/g4speak/releases/download/v1.2.1/G4Speak-Setup-1.2.1.exe' -OutFile $previousSetup
+          ./scripts/smoke-test.ps1 -PreviousInstaller $previousSetup
 
       - uses: actions/upload-artifact@v4
         with:
           name: G4Speak-windows
           path: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-*.exe
+            dist/G4Speak-Setup-1.2.2.exe
             dist/SHA256SUMS.txt
 
       - name: Publish release
@@ -45,8 +49,8 @@ jobs:
         with:
           files: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-*.exe
+            dist/G4Speak-Setup-1.2.2.exe
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
-          body_path: packaging/release-notes-1.2.1.md
+          body_path: docs/releases/v1.2.2.md
           make_latest: true

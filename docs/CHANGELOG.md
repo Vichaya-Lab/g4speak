@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2] - 2026-10-18
+
+- Organize the application into audio, text, and UI packages; separate build scripts, Windows packaging, and documentation.
+- Replace developer-facing menu labels and raw error messages with formal English UI and a masked credentials dialog.
+- Retain Whisper Large-v3 and enable low reasoning effort for Qwen proofreading. Clarify Thai-English phonetic spelling corrections and cover reported folder/fonder and vocabulary/sub cases.
+- Show a concise notice when enhanced proofreading is unavailable, preserve the original transcript, and pause requests after rate limits.
+- Exclude unused local LLM dependencies from the Windows installer and CI build.
+
+- Add Enhanced and Standard transcription modes to the English tray menu with persisted settings. New configurations enable Smart proofreading; existing explicit preferences are preserved.
+- Give Smart proofreading a 6-to-20-second duration-based allowance within the recognition deadline, split long transcripts without dropping their tails, and reject incomplete model responses.
+- Supply personal vocabulary and sentence context to cloud proofreading. Preserve numbers, negations, identifiers, and code; keep original text on unsafe edits or service failure. Allow contextual cross-script vocabulary spelling fixes.
+
 ## [1.2.1] - 2026-10-18
 
 - Add an English Windows Setup for per-user installation without administrator rights, a Start Menu shortcut, optional desktop shortcut, and Windows uninstall support. Preserve API settings and personal vocabulary on upgrades and uninstall. Include installer and portable EXE checksums in releases.

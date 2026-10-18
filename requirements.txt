@@ -9,4 +9,3 @@ openai==3.31.0
 pyperclip==1.11.0
 pyautogui==0.9.54
 python-dotenv==1.2.4
-llama-cpp-python==0.3.36

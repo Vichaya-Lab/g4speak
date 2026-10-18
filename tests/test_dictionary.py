@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from personal_dictionary import PersonalDictionary
-from dictionary_dialog import DictionaryDialog
+from g4speak.text.dictionary import PersonalDictionary
+from g4speak.ui.dictionary_dialog import DictionaryDialog
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel
 
 
@@ -80,7 +80,7 @@ class DictionaryTests(TemporaryDictionaryTestCase):
     def test_failed_write_preserves_file_and_active_words(self):
         self.dictionary.save(['Gemini'])
         original = self.path.read_bytes()
-        with patch('personal_dictionary.os.replace', side_effect=OSError('disk error')):
+        with patch('g4speak.text.dictionary.os.replace', side_effect=OSError('disk error')):
             with self.assertRaises(OSError):
                 self.dictionary.save(['Claude'])
         self.assertEqual(self.path.read_bytes(), original)

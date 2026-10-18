@@ -1,10 +1,10 @@
-﻿"""Recording lifecycle and native overlay regression checks (Windows)."""
+"""Recording lifecycle and native overlay regression checks (Windows)."""
 import os
 import sys
 import unittest
 from unittest.mock import patch
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import main
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from g4speak import app as main
 import numpy as np
 
 

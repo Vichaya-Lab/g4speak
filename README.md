@@ -42,18 +42,15 @@
 ## Getting Started
 
 ### 1. Download
-Download **G4Speak-Setup-1.2.1.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
+Download **G4Speak-Setup-1.2.2.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
 
 To update, run the newer Setup. Your API settings and Dictionary are preserved. Uninstall from **Settings > Apps > Installed apps > G4Speak**; personal settings are retained for reinstallation. `G4Speak.exe` is also available as a portable download. `SHA256SUMS.txt` contains checksums for both files.
 
 ### 2. Add API Key
 1. Get a free API key at [console.groq.com/keys](https://console.groq.com/keys).
-2. Open G4Speak from the Start Menu, then right-click the tray icon > **Edit API Keys...**.
-3. Paste your key in `.env` and save:
-   ```env
-   GROQ_API_KEY=gsk_your_key_here
-   ```
-4. Right-click the tray icon > **Reload API Keys**.
+2. Open G4Speak from the Start Menu, then right-click the tray icon > **API Credentials...**.
+3. Enter your Groq API key and click **Save**. The key is masked by default and is stored locally.
+4. Select **Transcription Mode > Enhanced** for contextual proofreading. Existing installations that used formatting only retain **Standard** until you change it.
 
 ---
 
@@ -61,35 +58,42 @@ The microphone stays open while G4Speak is running so dictation starts promptly.
 
 Dictation removes DC offset and uses the bundled Silero VAD v6 neural model locally to distinguish speech from silence, hiss, hum, and clicks before uploading. Only recordings with sustained speech are sent for recognition. Outer silence is trimmed with context and gain is capped at 2x after speech detection. If the VAD model fails, recognition stops with a notification instead of bypassing the check. TV or other people's speech can still pass a voice detector.
 
-Use `GROQ_STT_MODEL=whisper-large-v3` for multilingual accuracy. Set `GROQ_STT_LANGUAGE=auto` (default) to switch between Thai and English; `th` or `en` provides a language hint for single-language sessions. Reload API Keys after editing `.env`.
+Use `GROQ_STT_MODEL=whisper-large-v3` for multilingual accuracy. Set `GROQ_STT_LANGUAGE=auto` (default) to switch between Thai and English; `th` or `en` provides a language hint for single-language sessions. Reload Settings after editing `.env`.
 
-You can also choose **Dictation language** from the tray menu. **Thai (English words supported)** provides a Thai language hint for mainly Thai sentences containing English terms; use **English** for English dictation or **Auto** to switch freely. Language hints can reduce language-detection errors but do not guarantee correct words.
+You can also choose **Recognition Language** from the tray menu. **Thai** provides a Thai language hint for mainly Thai sentences containing English terms; use **English** for English dictation or **Automatic** to switch freely. Language hints can reduce language-detection errors but do not guarantee correct words.
 
 Recognition rejects individual segments with high no-speech probability, very low confidence, or excessive repetition. Responses missing segment confidence metadata are discarded. A confident-looking transcript alone cannot bypass local speech detection.
 
-Record for up to 10 minutes per session. Short words and recordings around one second are also accepted when local speech detection confirms speech. Recognition gets 30 seconds plus a quarter of the recording duration, capped at 180 seconds, including audio preparation and upload. The API request uses the remaining allowance instead of a fixed short timeout. These are maximum waits, not required recording lengths; results appear as soon as they are ready. API retries are disabled. Optional proofreading gets at most 350 ms within that limit and falls back to the transcript on timeout. Press **Esc** to cancel processing; late results are discarded. If recognition times out or fails, a tray notification appears. Low-confidence standalone phrases such as "Thank you" are filtered, while confidently spoken phrases are preserved.
+Record for up to 10 minutes per session. Short words and recordings around one second are also accepted when local speech detection confirms speech. Recognition gets 30 seconds plus a quarter of the recording duration, capped at 180 seconds, including audio preparation and upload. The API request uses the remaining allowance instead of a fixed short timeout. These are maximum waits, not required recording lengths; results appear as soon as they are ready. API retries are disabled. Enhanced proofreading gets 6 seconds plus one second per 800 characters, capped at 20 seconds and the remaining overall allowance. It falls back to the transcript on timeout. Press **Esc** to cancel processing; late results are discarded. If recognition times out or fails, a tray notification appears. Low-confidence standalone phrases such as "Thank you" are filtered, while confidently spoken phrases are preserved.
 
 Local speech detection processes bounded batches while carrying the model's recurrent state between batches, avoiding one large inference allocation for long recordings. Ten minutes of 16 kHz mono PCM WAV is approximately 19.2 MB, below Groq's documented 25 MB free-tier upload limit. Server load, connectivity, and account rate limits can still affect recognition. See [Groq speech-to-text documentation](https://console.groq.com/docs/speech-to-text).
 
-The bounded dictation pipeline skips the optional local LLM because local loading and inference cannot be interrupted reliably within this budget.
+The Windows build uses cloud recognition and optional cloud proofreading. The legacy local LLM is excluded from the installer and normal dependencies; source-only experiments can install `requirements/local.txt`. No local language model is downloaded by the application.
 
 ## Tray Menu
 
 Right-click the icon by the Windows clock:
-- **Edit API Keys...** — Opens `.env` in Notepad.
-- **Reload API Keys** — Updates keys without restarting.
-- **Dictionary...** — Save the names, brands, and words you use.
-- **Dictation language** — Choose Auto, Thai, or English; the choice is saved in `.env`.
-- **Run at Startup** — Toggle Windows autostart.
-- **Quit G4Speak** — Exit application.
+- **API Credentials...** - Enter or update your API key in a masked credentials form.
+- **Reload Settings** - Apply externally edited settings.
+- **Personal Dictionary...** - Save preferred names, words, and phrases.
+- **Transcription Mode** - Enhanced adds contextual proofreading; Standard applies local formatting only.
+- **Recognition Language** - Choose Automatic, Thai, or English. Thai also supports English technical terms.
+- **Launch at Sign-in** - Start G4Speak when you sign in to Windows.
+- **Exit G4Speak** - Close the application.
 
 ## Personal dictionary
 
-Right-click the tray icon and choose **Dictionary...**. Enter only the desired spellings, one word or phrase per line, such as a name, a specialized term, or a phrase you use. Click **Save** to apply changes immediately. Edit or remove lines to update the list; **Cancel** discards unsaved edits. The editor and its labels are in English; vocabulary can use Thai, English, or other languages.
+Right-click the tray icon and choose **Personal Dictionary...**. Enter only the desired spellings, one word or phrase per line, such as a name, a specialized term, or a phrase you use. Click **Save** to apply changes immediately. Edit or remove lines to update the list; **Cancel** discards unsaved edits. The editor and its labels are in English; vocabulary can use Thai, English, or other languages.
 
 Words are saved locally in `%APPDATA%\G4Speak\dictionary.json` and survive app restarts and EXE updates. Up to 500 words or phrases are supported, with a maximum of 200 characters each. Duplicates are rejected. Existing dictionaries in the old correction-pair format retain the desired spellings automatically; no incorrect spellings are required.
 
 A short vocabulary hint is sent with speech-verified audio to guide recognition. Put your most important words first: hints include whole entries in list order up to a conservative 200 UTF-8 byte budget to stay below the provider's prompt limit. Longer entries that do not fit are skipped; all saved words still participate in local casing corrections. Empty dictionaries send no hint. This guides spelling rather than training the model and does not guarantee correct recognition. Local speech detection and transcript confidence filters remain enabled. After proofreading (or its timeout fallback), exact matches use your preferred casing without guessing replacements for unrelated words.
+
+## Enhanced and Standard transcription
+
+Choose **Transcription Mode > Enhanced** in the tray menu for sentence-context spelling correction and more readable punctuation and spacing. Speech recognition still uses Whisper Large-v3; proofreading uses `qwen/qwen3.8-27b` with low reasoning effort through the same Groq account. The full Whisper model has not been replaced with Turbo. Set `GROQ_LLM_MODEL` to override the proofreading model. Enhanced sends the transcript and bounded personal vocabulary to the chat API, adding latency and API usage. It does not read the active document or save conversation history. New configurations use Enhanced; existing `GROQ_REFINER=false` settings remain Standard until changed through the menu.
+
+Long transcripts are proofread in chunks so a short response limit cannot truncate the entire dictation. Numeric, negation, identifier, and code changes, incomplete responses, and large unrelated rewrites are rejected. Dictionary spellings can replace phonetic transcriptions inside retained sentence context. These are conservative checks, not a guarantee of unchanged meaning or correct recognition. On rejection, timeout, or service failure, the original transcript is retained. Service failures show a brief notice; rate limits pause further proofreading requests for 60 seconds instead of repeatedly retrying each chunk. **Standard** skips the chat request while retaining speech detection, dictionary hints, and local formatting. Mode settings persist across restarts.
 
 ---
 
@@ -114,7 +118,24 @@ Build the portable app and Windows Setup (downloads and verifies Inno Setup 6.7.
 build.bat
 ```
 
-Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.2.1.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File packaging/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
+Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.2.2.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File scripts/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
+
+## Project structure
+
+```text
+src/g4speak/       Application package
+  audio/           Local speech detection
+  text/            Vocabulary and proofreading guards
+  ui/              Native settings and dictionary windows
+scripts/           Build and installer verification tools
+packaging/windows/ Windows installer and version resources
+tests/             Regression tests and audio fixtures
+assets/            Icons and bundled speech detector
+docs/              Changelog and release notes
+.github/           Workflows and contribution policies
+```
+
+The source entry point remains `python main.py`. See [changelog](docs/CHANGELOG.md) and [contributing guide](.github/CONTRIBUTING.md).
 
 ---
 

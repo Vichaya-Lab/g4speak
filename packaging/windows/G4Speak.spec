@@ -1,18 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
-try:
-    _llama_binaries, _llama_datas, _llama_hidden = collect_all('llama_cpp')
-except Exception:
-    _llama_binaries, _llama_datas, _llama_hidden = [], [], []
+project_root = Path(SPECPATH).parent.parent
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
-    binaries=_llama_binaries,
-    datas=_llama_datas + [('assets', 'assets')],
-    hiddenimports=_llama_hidden,
+    [str(project_root / 'main.py')],
+    pathex=[str(project_root / 'src')],
+    binaries=[],
+    datas=[(str(project_root / 'assets'), 'assets')],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -23,6 +20,7 @@ a = Analysis(
         'faster_whisper', 'sherpa_onnx', 'keyboard',
         'transformers', 'huggingface_hub', 'anthropic',
         'av', 'ctranslate2', 'mediapipe',
+        'llama_cpp', 'IPython', 'pytest', 'notebook', 'jupyter', 'jedi', 'parso',
         'PySide6_WebEngine', 'PySide6_Pdf', 'PySide6_Addons', 'PySide6_Qml',
     ],
     noarchive=False,
@@ -37,8 +35,8 @@ exe = EXE(
     a.datas,
     [],
     name='G4Speak',
-    version='packaging/windows-version.txt',
-    icon='assets/logo.ico',
+    version=str(project_root / 'packaging/windows/version.txt'),
+    icon=str(project_root / 'assets/logo.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

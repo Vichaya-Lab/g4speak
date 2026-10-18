@@ -3,9 +3,9 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import main
+from g4speak import app as main
 
 
 class GuardrailTests(unittest.TestCase):
