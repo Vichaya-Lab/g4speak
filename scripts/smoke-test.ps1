@@ -1,11 +1,12 @@
 param(
     [string]$Installer = (Join-Path $PSScriptRoot '..\dist\G4Speak-Setup-1.2.2.exe'),
-    [string]$PreviousInstaller = ''
+    [string]$PreviousInstaller = '',
+    [string]$PreviousVersion = '1.2.1'
 )
 $ErrorActionPreference = 'Stop'
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $initialInstaller = if ($PreviousInstaller) { (Resolve-Path -LiteralPath $PreviousInstaller).Path } else { $Installer }
-$initialVersion = (Get-Item -LiteralPath $initialInstaller).VersionInfo.ProductVersion
+$initialVersion = if ($PreviousInstaller) { $PreviousVersion } else { '1.2.2' }
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B3F29956-3D69-4994-9B8D-84317FD5C621}_is1'
 if (Test-Path -LiteralPath $uninstallKey) {
     throw 'G4Speak is already installed for this user. Run this isolated installer test on a clean account.'
@@ -33,8 +34,9 @@ try {
     if (-not (Test-Path -LiteralPath $executable) -or -not (Test-Path -LiteralPath $uninstaller)) {
         throw 'Setup did not install the app and uninstaller.'
     }
-    if ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne $initialVersion) {
-        throw 'Windows uninstall registration has the wrong version.'
+    $installedVersion = (Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion
+    if ($installedVersion -ne $initialVersion) {
+        throw "Expected installed version '$initialVersion', got '$installedVersion'."
     }
     Invoke-CheckedProcess $executable @('--smoke-test')
     $settings = Join-Path $installDirectory '.env'
