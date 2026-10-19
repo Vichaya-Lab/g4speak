@@ -42,7 +42,7 @@
 ## Getting Started
 
 ### 1. Download
-Download **G4Speak-Setup-1.2.2.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
+Download **G4Speak-Setup-1.3.0.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
 
 To update, run the newer Setup. Your API settings and Dictionary are preserved. Uninstall from **Settings > Apps > Installed apps > G4Speak**; personal settings are retained for reinstallation. `G4Speak.exe` is also available as a portable download. `SHA256SUMS.txt` contains checksums for both files.
 
@@ -118,7 +118,7 @@ Build the portable app and Windows Setup (downloads and verifies Inno Setup 6.7.
 build.bat
 ```
 
-Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.2.2.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File scripts/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
+Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.3.0.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File scripts/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
 
 ## Project structure
 

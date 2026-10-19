@@ -40,7 +40,7 @@ jobs:
           name: G4Speak-windows
           path: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-1.2.2.exe
+            dist/G4Speak-Setup-1.3.0.exe
             dist/SHA256SUMS.txt
 
       - name: Publish release
@@ -49,8 +49,8 @@ jobs:
         with:
           files: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-1.2.2.exe
+            dist/G4Speak-Setup-1.3.0.exe
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
-          body_path: docs/releases/v1.2.2.md
+          body_path: docs/releases/v1.3.0.md
           make_latest: true

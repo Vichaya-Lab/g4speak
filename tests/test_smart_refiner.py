@@ -50,6 +50,23 @@ class SmartRefinerTests(unittest.TestCase):
                 self.client.chat.completions.create.return_value = self.result(expected)
                 self.assertEqual(self.refiner.refine(raw), expected)
 
+    def test_proofreading_works_with_1000_output_token_account_limit(self):
+        def limited_account(**options):
+            if options['max_tokens'] > 1000:
+                error = RuntimeError('Requested output tokens exceed OTPM limit 1000')
+                error.status_code = 429
+                raise error
+            raw = json.loads(options['messages'][-1]['content'])['transcript']
+            return self.result(raw.replace('โรงบาล', 'โรงพยาบาล'))
+
+        self.client.chat.completions.create.side_effect = limited_account
+        notice = MagicMock()
+        self.refiner._on_unavailable = notice
+        for raw in ('ผมไปโรงบาลมา', 'ทดสอบระบบนี้ ' * 65 + 'ผมไปโรงบาลมา'):
+            with self.subTest(length=len(raw)):
+                self.assertEqual(self.refiner.refine(raw.strip()), raw.strip().replace('โรงบาล', 'โรงพยาบาล'))
+        notice.assert_not_called()
+
     def test_dictionary_supplied_as_data_with_transcript(self):
         with tempfile.TemporaryDirectory() as directory:
             dictionary = PersonalDictionary(Path(directory) / 'dictionary.json')

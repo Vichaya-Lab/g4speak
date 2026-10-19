@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.0] - 2026-10-19
+
+- Fix Enhanced proofreading failing on Groq accounts with a 1,000 output tokens per minute limit. Scale the requested output budget with transcript length and cap it at 1,000 tokens.
+- Add regression coverage for short and long Thai transcripts under that limit. Preserve the original transcription when proofreading fails or returns an incomplete correction.
+
 ## [1.2.2] - 2026-10-18
 
 - Organize the application into audio, text, and UI packages; separate build scripts, Windows packaging, and documentation.

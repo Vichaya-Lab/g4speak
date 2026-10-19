@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.3.0"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -962,7 +962,9 @@ class TextRefiner:
                         {'role': 'user', 'content': json.dumps({'transcript': raw, 'vocabulary': vocabulary}, ensure_ascii=False)},
                     ],
                     temperature=0.0,
-                    max_tokens=min(8192, max(1024, len(raw) * 3 + 1024)),
+                    # Some Groq accounts allow only 1,000 output tokens/minute.
+                    # Oversized reservations are rejected even for short transcripts.
+                    max_tokens=min(1000, max(256, len(raw) * 3 + 256)),
                     **options,
                 )
                 choice = response.choices[0]
