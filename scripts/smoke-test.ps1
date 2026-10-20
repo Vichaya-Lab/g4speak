@@ -1,12 +1,21 @@
 param(
-    [string]$Installer = (Join-Path $PSScriptRoot '..\dist\G4Speak-Setup-1.3.0.exe'),
+    [string]$Installer = '',
     [string]$PreviousInstaller = '',
-    [string]$PreviousVersion = '1.2.1'
+    [string]$PreviousVersion = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Installer) {
+    $portableVersion = (Get-Item -LiteralPath (Join-Path $PSScriptRoot '..\dist\G4Speak.exe')).VersionInfo.ProductVersion
+    $Installer = Join-Path $PSScriptRoot "..\dist\G4Speak-Setup-$portableVersion.exe"
+}
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
+$targetVersion = ([version](Get-Item -LiteralPath $Installer).VersionInfo.ProductVersion).ToString(3)
 $initialInstaller = if ($PreviousInstaller) { (Resolve-Path -LiteralPath $PreviousInstaller).Path } else { $Installer }
-$initialVersion = if ($PreviousInstaller) { $PreviousVersion } else { '1.3.0' }
+$initialVersion = if ($PreviousInstaller -and $PreviousVersion) {
+    ([version]$PreviousVersion).ToString(3)
+} else {
+    ([version](Get-Item -LiteralPath $initialInstaller).VersionInfo.ProductVersion).ToString(3)
+}
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B3F29956-3D69-4994-9B8D-84317FD5C621}_is1'
 if (Test-Path -LiteralPath $uninstallKey) {
     throw 'G4Speak is already installed for this user. Run this isolated installer test on a clean account.'
@@ -43,7 +52,7 @@ try {
     'GROQ_API_KEY=installer-upgrade-test-placeholder' | Set-Content -LiteralPath $settings -Encoding ascii
     $settingsHash = (Get-FileHash -LiteralPath $settings).Hash
     Invoke-CheckedProcess $Installer ($installArguments + @('/LOG="' + (Join-Path $testRoot 'upgrade.log') + '"'))
-    if ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne '1.3.0') {
+    if ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne $targetVersion) {
         throw 'Upgrade did not register the new version.'
     }
     if ((Get-FileHash -LiteralPath $settings).Hash -ne $settingsHash) { throw 'Upgrade changed the existing API settings.' }

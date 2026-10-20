@@ -25,22 +25,26 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build app and Setup
+        id: build
         shell: pwsh
-        run: ./scripts/build-release.ps1
+        run: |
+          ./scripts/build-release.ps1
+          $version = (Get-Item -LiteralPath 'dist/G4Speak.exe').VersionInfo.ProductVersion
+          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Verify install, upgrade, and uninstall
         shell: pwsh
         run: |
-          $previousSetup = Join-Path $env:RUNNER_TEMP 'G4Speak-Setup-1.2.1.exe'
-          Invoke-WebRequest -Uri 'https://github.com/Vichaya-Lab/g4speak/releases/download/v1.2.1/G4Speak-Setup-1.2.1.exe' -OutFile $previousSetup
-          ./scripts/smoke-test.ps1 -PreviousInstaller $previousSetup
+          $previousSetup = Join-Path $env:RUNNER_TEMP 'G4Speak-Setup-1.3.0.exe'
+          Invoke-WebRequest -Uri 'https://github.com/Vichaya-Lab/g4speak/releases/download/v1.3.0/G4Speak-Setup-1.3.0.exe' -OutFile $previousSetup
+          ./scripts/smoke-test.ps1 -Installer 'dist/G4Speak-Setup-${{ steps.build.outputs.version }}.exe' -PreviousInstaller $previousSetup
 
       - uses: actions/upload-artifact@v4
         with:
           name: G4Speak-windows
           path: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-1.3.0.exe
+            dist/G4Speak-Setup-${{ steps.build.outputs.version }}.exe
             dist/SHA256SUMS.txt
 
       - name: Publish release
@@ -49,8 +53,8 @@ jobs:
         with:
           files: |
             dist/G4Speak.exe
-            dist/G4Speak-Setup-1.3.0.exe
+            dist/G4Speak-Setup-${{ steps.build.outputs.version }}.exe
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
-          body_path: docs/releases/v1.3.0.md
+          body_path: docs/releases/v${{ steps.build.outputs.version }}.md
           make_latest: true

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.1] - 2026-10-20
+
+- Prevent Qwen reasoning from exhausting short proofreading output budgets. Request corrected text explicitly without reasoning and retain fallback on incomplete answers.
+- Reconsider rejected Qwen answers once from the original transcript using low reasoning effort and a bounded 1,000-token allowance, only while the existing deadline permits. Keep all content checks and avoid retrying service failures.
+- Bound proofreading chunks by UTF-8 bytes as well as characters for Thai; prefer sentence boundaries, retain combining marks, and supply read-only neighboring context.
+- Clarify conservative spelling correction for ordinary words, colloquial speech, and incomplete sentences.
+- Reject substantial local Thai consonant replacements without explicit vocabulary support; unchanged surrounding prose must not hide an invented word. Keep rejected ungrounded rewrites without spending another reasoning request.
+- Add repeated live accuracy evaluation with separate text and end-to-end audio modes, CER, already-correct controls, regressions, and explicit service/incomplete-response counts. Include an optional pinned Google FLEURS Thai sample downloader with CC BY 4.0 attribution.
+- Read release asset names and installer smoke-test expectations from built version metadata. Verify upgrades from v1.3.0 before publishing v1.3.1.
+
 ## [1.3.0] - 2026-10-19
 
 - Fix Enhanced proofreading failing on Groq accounts with a 1,000 output tokens per minute limit. Scale the requested output budget with transcript length and cap it at 1,000 tokens.

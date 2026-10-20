@@ -1,0 +1,29 @@
+{
+  "description": "Synthetic text-only regression cases. These do not measure microphone or Thai ASR accuracy. Add audio paths and verified references for end-to-end evaluation.",
+  "cases": [
+    {"id": "folder", "category": "technical", "transcript": "ช่วยจัด fonder ให้เป็นระเบียบ", "reference": "ช่วยจัด folder ให้เป็นระเบียบ"},
+    {"id": "thai-vocabulary", "category": "general", "transcript": "เพิ่ม sub ในพจนานุกรมส่วนตัว", "reference": "เพิ่มศัพท์ในพจนานุกรมส่วนตัว"},
+    {"id": "groq-qwen", "category": "technical", "transcript": "ผมใช้โกรกถอดเสียงแล้วส่งให้คิวเวนแก้ข้อความ", "reference": "ผมใช้ Groq ถอดเสียงแล้วส่งให้ Qwen แก้ข้อความ", "vocabulary": ["Groq", "Qwen"]},
+    {"id": "python-api", "category": "technical", "transcript": "ผมใช้ไพทอนเขียนเอพีไอ", "reference": "ผมใช้ Python เขียน API", "vocabulary": ["Python", "API"]},
+    {"id": "kubernetes", "category": "technical", "transcript": "ช่วยตรวจคูเบอร์เนทีสคลัสเตอร์ให้หน่อย", "reference": "ช่วยตรวจ Kubernetes คลัสเตอร์ให้หน่อย", "vocabulary": ["Kubernetes"]},
+    {"id": "postgresql", "category": "technical", "transcript": "ระบบนี้เก็บข้อมูลในโพสต์เกรสคิวแอล", "reference": "ระบบนี้เก็บข้อมูลใน PostgreSQL", "vocabulary": ["PostgreSQL"]},
+    {"id": "english-spelling", "category": "general", "transcript": "please check the enviroment before deployment", "reference": "Please check the environment before deployment."},
+    {"id": "thai-spelling", "category": "general", "transcript": "ขออนุญาติส่งเอกสารให้พรุ่งนี้", "reference": "ขออนุญาตส่งเอกสารให้พรุ่งนี้"},
+    {"id": "thai-business", "category": "general", "transcript": "ช่วยตรวจสอบประสิทธิภาบของระบบ", "reference": "ช่วยตรวจสอบประสิทธิภาพของระบบ"},
+    {"id": "thai-medical", "category": "specialized", "transcript": "ผลตรวจแสดงภาวะไทรอยเป็นพิษ", "reference": "ผลตรวจแสดงภาวะไทรอยด์เป็นพิษ", "vocabulary": ["ไทรอยด์เป็นพิษ"]},
+    {"id": "thai-science", "category": "specialized", "transcript": "ศึกษาการสังเคราะแสงของพืช", "reference": "ศึกษาการสังเคราะห์แสงของพืช"},
+    {"id": "thai-ordinary", "category": "control", "transcript": "วันนี้ไปกินข้าวกับเพื่อนแล้วกลับบ้าน", "reference": "วันนี้ไปกินข้าวกับเพื่อนแล้วกลับบ้าน"},
+    {"id": "thai-question", "category": "control", "transcript": "พรุ่งนี้ฝนจะตกไหม", "reference": "พรุ่งนี้ฝนจะตกไหม"},
+    {"id": "thai-negation", "category": "control", "transcript": "ไม่ต้องลบข้อมูลเก่าและอย่าส่งไฟล์นี้", "reference": "ไม่ต้องลบข้อมูลเก่าและอย่าส่งไฟล์นี้"},
+    {"id": "numbers", "category": "control", "transcript": "โอนเงิน 2500 บาทวันที่ 21/10/2026", "reference": "โอนเงิน 2500 บาทวันที่ 21/10/2026"},
+    {"id": "decimal", "category": "control", "transcript": "ตั้งค่า threshold เป็น 0.75 และ timeout เป็น 30 วินาที", "reference": "ตั้งค่า threshold เป็น 0.75 และ timeout เป็น 30 วินาที"},
+    {"id": "sub-command", "category": "control", "transcript": "ใช้ sub เป็นชื่อคำสั่งย่อยในโปรแกรม", "reference": "ใช้ sub เป็นชื่อคำสั่งย่อยในโปรแกรม"},
+    {"id": "ordinary-cloud", "category": "control", "transcript": "วันนี้มีเมฆมากและฝนตก", "reference": "วันนี้มีเมฆมากและฝนตก", "vocabulary": ["Claude", "Groq", "Qwen"]},
+    {"id": "ordinary-birth", "category": "control", "transcript": "พี่สาวกำลังจะคลอดลูก", "reference": "พี่สาวกำลังจะคลอดลูก", "vocabulary": ["Claude"]},
+    {"id": "english-question", "category": "control", "transcript": "can you check the file for me", "reference": "Can you check the file for me?"},
+    {"id": "english-negation", "category": "control", "transcript": "do not delete the old files", "reference": "Do not delete the old files."},
+    {"id": "identifiers", "category": "control", "transcript": "เปิด config.json แล้วเรียก API", "reference": "เปิด config.json แล้วเรียก API"},
+    {"id": "email", "category": "control", "transcript": "ส่งอีเมลไปที่ user@example.com", "reference": "ส่งอีเมลไปที่ user@example.com"},
+    {"id": "already-correct", "category": "control", "transcript": "ใช้ Python กับ PostgreSQL เชื่อมต่อ API", "reference": "ใช้ Python กับ PostgreSQL เชื่อมต่อ API", "vocabulary": ["Python", "PostgreSQL", "API"]}
+  ]
+}

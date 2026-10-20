@@ -43,7 +43,7 @@ from .text.dictionary import PersonalDictionary
 from .ui.dictionary_dialog import DictionaryDialog
 from .ui.credentials_dialog import CredentialsDialog
 from .text.proofreading import (SYSTEM_PROMPT as SMART_SYSTEM_PROMPT, protected_content_matches,
-                           text_chunks, vocabulary_edits_preserve_context)
+                           text_chunks, vocabulary_edits_preserve_context, has_unsupported_thai_replacement)
 from PySide6.QtCore import (QEasingCurve, QFileInfo, QObject, QPointF,
                           Property, QPropertyAnimation, QRectF, Qt, QThread,
                           QTimer, Signal)
@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QMenu, QStyle,
 
 # ============================== CONFIG =============================
 APP_NAME = "G4Speak"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 # Primary STT: Full 32-layer Whisper Large-v3 for maximum accuracy & natural human speech
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -936,7 +936,9 @@ class TextRefiner:
             return text
         words = self._dictionary.words if self._dictionary is not None else ()
         results = []
-        chunks = text_chunks(text)
+        # Leave room for corrected spellings under the 1,000 output-token cap,
+        # including Thai, whose token count is much higher than English prose.
+        chunks = text_chunks(text, max_bytes=700)
         for index, chunk in enumerate(chunks):
             if cancelled is not None and cancelled.is_set():
                 raise CancelledError()
@@ -953,33 +955,51 @@ class TextRefiner:
                     vocabulary.append(word)
                     size += word_size
             model = os.getenv('GROQ_LLM_MODEL', GROQ_LLM_MODEL)
-            options = {'reasoning_effort': 'low'} if model.startswith('qwen/qwen3.8') else {}
+            qwen = model.startswith('qwen/qwen3.8')
+            messages = [
+                {'role': 'system', 'content': SMART_SYSTEM_PROMPT},
+                {'role': 'user', 'content': json.dumps({
+                    'transcript': raw, 'vocabulary': vocabulary,
+                    # Read-only neighbors help resolve a term split across chunks.
+                    'context_before': ''.join(chunks[:index])[-160:],
+                    'context_after': ''.join(chunks[index + 1:])[:160],
+                }, ensure_ascii=False)},
+            ]
             try:
-                response = client.with_options(timeout=max(0.05, deadline - time.monotonic()), max_retries=0).chat.completions.create(
-                    model=model,
-                    messages=[
-                        {'role': 'system', 'content': SMART_SYSTEM_PROMPT},
-                        {'role': 'user', 'content': json.dumps({'transcript': raw, 'vocabulary': vocabulary}, ensure_ascii=False)},
-                    ],
-                    temperature=0.0,
-                    # Some Groq accounts allow only 1,000 output tokens/minute.
-                    # Oversized reservations are rejected even for short transcripts.
-                    max_tokens=min(1000, max(256, len(raw) * 3 + 256)),
-                    **options,
-                )
-                choice = response.choices[0]
-                if cancelled is not None and cancelled.is_set():
-                    raise CancelledError()
-                output = (choice.message.content or '').strip()
-                output = format_tech_casing(format_spacing(output))
-                if choice.finish_reason == 'stop' and self._is_valid_correction(raw, output, vocabulary=words):
-                    output = self._strip_unspoken_polite(raw, output)
-                    leading = chunk[:len(chunk) - len(chunk.lstrip())]
-                    trailing = chunk[len(chunk.rstrip()):]
-                    results.append(leading + output + trailing)
-                else:
+                accepted = chunk
+                for attempt in range(2 if qwen else 1):
+                    if cancelled is not None and cancelled.is_set():
+                        raise CancelledError()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= (0.75 if attempt else 0.05):
+                        break
+                    # Usually skip reasoning to reserve output for dictation. If
+                    # validation rejects it, reconsider the ORIGINAL once with a
+                    # bounded reasoning budget; never iterate on a changed answer.
+                    options = {'reasoning_effort': 'low' if attempt else 'none',
+                               'extra_body': {'reasoning_format': 'hidden'}} if qwen else {}
+                    response = client.with_options(timeout=max(0.05, remaining), max_retries=0).chat.completions.create(
+                        model=model, messages=messages, temperature=0.0,
+                        # Keep every reservation within small-account output limits.
+                        max_tokens=1000 if attempt else min(1000, max(256, len(raw.encode('utf-8')) + 256)),
+                        **options,
+                    )
+                    choice = response.choices[0]
+                    if cancelled is not None and cancelled.is_set():
+                        raise CancelledError()
+                    output = format_tech_casing(format_spacing((choice.message.content or '').strip()))
+                    if choice.finish_reason == 'stop' and self._is_valid_correction(raw, output, vocabulary=words):
+                        output = self._strip_unspoken_polite(raw, output)
+                        leading = chunk[:len(chunk) - len(chunk.lstrip())]
+                        trailing = chunk[len(chunk.rstrip()):]
+                        accepted = leading + output + trailing
+                        break
                     logging.info('Smart proofreading rejected an incomplete or unsafe correction.')
-                    results.append(chunk)
+                    # An ungrounded rewrite without vocabulary should be retained,
+                    # rather than spending reasoning tokens guessing another word.
+                    if choice.finish_reason == 'stop' and not vocabulary:
+                        break
+                results.append(accepted)
             except CancelledError:
                 raise
             except Exception as exc:
@@ -1113,6 +1133,8 @@ class TextRefiner:
         # Explicit vocabulary can replace a phonetic Thai spelling with a Latin name.
         # It must still retain surrounding context and all protected content.
         vocabulary_fix = vocabulary_edits_preserve_context(raw, out, vocabulary)
+        if not vocabulary_fix and has_unsupported_thai_replacement(raw, out, vocabulary):
+            return False
         raw_dom, out_dom = _thai_dom(raw), _thai_dom(out)
         if raw_dom is not None and out_dom is not None and raw_dom != out_dom:
             if not vocabulary_fix:

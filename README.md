@@ -42,7 +42,7 @@
 ## Getting Started
 
 ### 1. Download
-Download **G4Speak-Setup-1.3.0.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
+Download **G4Speak-Setup-1.3.1.exe** from the [latest release](https://github.com/Vichaya-Lab/g4speak/releases/latest), run it, and click **Install**. Setup installs for your Windows account without administrator rights, creates a Start Menu shortcut, and offers to launch G4Speak. A desktop shortcut is optional. No Python installation is required.
 
 To update, run the newer Setup. Your API settings and Dictionary are preserved. Uninstall from **Settings > Apps > Installed apps > G4Speak**; personal settings are retained for reinstallation. `G4Speak.exe` is also available as a portable download. `SHA256SUMS.txt` contains checksums for both files.
 
@@ -64,7 +64,7 @@ You can also choose **Recognition Language** from the tray menu. **Thai** provid
 
 Recognition rejects individual segments with high no-speech probability, very low confidence, or excessive repetition. Responses missing segment confidence metadata are discarded. A confident-looking transcript alone cannot bypass local speech detection.
 
-Record for up to 10 minutes per session. Short words and recordings around one second are also accepted when local speech detection confirms speech. Recognition gets 30 seconds plus a quarter of the recording duration, capped at 180 seconds, including audio preparation and upload. The API request uses the remaining allowance instead of a fixed short timeout. These are maximum waits, not required recording lengths; results appear as soon as they are ready. API retries are disabled. Enhanced proofreading gets 6 seconds plus one second per 800 characters, capped at 20 seconds and the remaining overall allowance. It falls back to the transcript on timeout. Press **Esc** to cancel processing; late results are discarded. If recognition times out or fails, a tray notification appears. Low-confidence standalone phrases such as "Thank you" are filtered, while confidently spoken phrases are preserved.
+Record for up to 10 minutes per session. Short words and recordings around one second are also accepted when local speech detection confirms speech. Recognition gets 30 seconds plus a quarter of the recording duration, capped at 180 seconds, including audio preparation and upload. The API request uses the remaining allowance instead of a fixed short timeout. These are maximum waits, not required recording lengths; results appear as soon as they are ready. Automatic HTTP retries are disabled. Enhanced proofreading gets 6 seconds plus one second per 800 characters, capped at 20 seconds and the remaining overall allowance. It falls back to the transcript on timeout. Press **Esc** to cancel processing; late results are discarded. If recognition times out or fails, a tray notification appears. Low-confidence standalone phrases such as "Thank you" are filtered, while confidently spoken phrases are preserved.
 
 Local speech detection processes bounded batches while carrying the model's recurrent state between batches, avoiding one large inference allocation for long recordings. Ten minutes of 16 kHz mono PCM WAV is approximately 19.2 MB, below Groq's documented 25 MB free-tier upload limit. Server load, connectivity, and account rate limits can still affect recognition. See [Groq speech-to-text documentation](https://console.groq.com/docs/speech-to-text).
 
@@ -91,9 +91,9 @@ A short vocabulary hint is sent with speech-verified audio to guide recognition.
 
 ## Enhanced and Standard transcription
 
-Choose **Transcription Mode > Enhanced** in the tray menu for sentence-context spelling correction and more readable punctuation and spacing. Speech recognition still uses Whisper Large-v3; proofreading uses `qwen/qwen3.8-27b` with low reasoning effort through the same Groq account. The full Whisper model has not been replaced with Turbo. Set `GROQ_LLM_MODEL` to override the proofreading model. Enhanced sends the transcript and bounded personal vocabulary to the chat API, adding latency and API usage. It does not read the active document or save conversation history. New configurations use Enhanced; existing `GROQ_REFINER=false` settings remain Standard until changed through the menu.
+Choose **Transcription Mode > Enhanced** in the tray menu for sentence-context spelling correction and more readable punctuation and spacing. Speech recognition still uses Whisper Large-v3; proofreading uses `qwen/qwen3.8-27b` through the same Groq account. Qwen initially runs without reasoning tokens so the limited output budget is available for the corrected text. If validation rejects its answer, Qwen may reconsider the original transcript once with low reasoning effort and a 1,000-token total output allowance, within the same deadline. Reasoning is explicitly excluded from returned text. This second request adds API usage and latency; failed requests are not retried. The full Whisper model has not been replaced with Turbo. Set `GROQ_LLM_MODEL` to override the proofreading model. Enhanced sends the transcript and bounded personal vocabulary to the chat API, adding latency and API usage. It does not read the active document or save conversation history. New configurations use Enhanced; existing `GROQ_REFINER=false` settings remain Standard until changed through the menu.
 
-Long transcripts are proofread in chunks so a short response limit cannot truncate the entire dictation. Numeric, negation, identifier, and code changes, incomplete responses, and large unrelated rewrites are rejected. Dictionary spellings can replace phonetic transcriptions inside retained sentence context. These are conservative checks, not a guarantee of unchanged meaning or correct recognition. On rejection, timeout, or service failure, the original transcript is retained. Service failures show a brief notice; rate limits pause further proofreading requests for 60 seconds instead of repeatedly retrying each chunk. **Standard** skips the chat request while retaining speech detection, dictionary hints, and local formatting. Mode settings persist across restarts.
+Long transcripts are proofread in chunks bounded by both characters and UTF-8 bytes; this prevents Thai output from exceeding a limit sized for English text. Splits prefer sentence boundaries and retain Thai combining marks. Each chunk receives up to 160 characters of read-only neighboring speech on either side for context. Numeric, negation, identifier, and code changes, incomplete responses, and large unrelated rewrites are rejected. A local Thai check also rejects replacements that discard three or more consonants without vocabulary support, even when the rest of a long sentence matches. This conservative check may retain a legitimate large correction. Dictionary spellings can replace phonetic transcriptions inside retained sentence context. Ordinary words should remain unchanged when context does not support a technical term; colloquial phrasing and incomplete thoughts are preserved. These are conservative checks, not a guarantee of unchanged meaning or correct recognition. On rejection, timeout, or service failure, the original transcript is retained. A completed but unsafe answer without supporting vocabulary is kept as the original rather than reconsidered. Service failures show a brief notice; rate limits pause further proofreading requests for 60 seconds instead of repeatedly retrying each chunk. **Standard** skips the chat request while retaining speech detection, dictionary hints, and local formatting. Mode settings persist across restarts.
 
 ---
 
@@ -113,12 +113,24 @@ Run test suite:
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+Evaluate accuracy against Groq using the configured API key (uses API quota; no microphone recording or typing):
+
+```bash
+python scripts/evaluate-accuracy.py --output .render/accuracy-text.json --repeats 3 --delay 14
+python scripts/fetch-accuracy-fixtures.py --count 6
+python scripts/evaluate-accuracy.py --manifest .render/fleurs/manifest.json --output .render/accuracy-audio.json --repeats 3 --delay 14
+```
+
+The bundled text corpus covers spelling errors, technical terms, specialized Thai, and already-correct control sentences. It measures proofreading, not recognition. The optional downloader streams a small reproducible sample of human Thai speech from [Google FLEURS](https://huggingface.co/datasets/google/fleurs) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), converts float WAV to PCM16, and leaves reference text unchanged. Audio evaluation uses the application's actual processing worker, including speech detection and fallback. The first distinct utterances in a pinned archive are a small convenience sample; results do not represent all accents, microphones, or personal dictation.
+
+Reports separate raw recognition from final text, track character error rate (CER), regressions, service failures, incomplete responses, and protected-content changes. Whitespace, case, and sentence punctuation are normalized; numeric punctuation is retained. The evaluator stops after a service failure and saves partial results. Adjust `--delay` for your account limits and use `--only` to rerun selected case IDs. Custom manifests support a verified `reference`, either `transcript` or a relative 16 kHz mono PCM16 `audio` path, and optional `vocabulary`, `language` (`auto`, `th`, `en`), and `category`. Evaluation does not train or fine-tune the hosted models. Reports include supplied text; generated reports and downloaded speech stay under ignored `.render/` by default.
+
 Build the portable app and Windows Setup (downloads and verifies Inno Setup 6.7.3 on the first build):
 ```cmd
 build.bat
 ```
 
-Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.3.0.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File scripts/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
+Outputs are `dist/G4Speak.exe`, `dist/G4Speak-Setup-1.3.1.exe`, and `dist/SHA256SUMS.txt`. The same release build runs in GitHub Actions for `v*` tags; installation, upgrade, and uninstall are checked before publishing. Run `powershell -File scripts/smoke-test.ps1` to verify an installer on a Windows account with no existing Setup installation.
 
 ## Project structure
 

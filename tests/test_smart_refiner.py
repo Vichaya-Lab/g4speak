@@ -15,7 +15,7 @@ from g4speak import app as main
 from dotenv import dotenv_values
 from PySide6.QtCore import QObject
 from g4speak.text.dictionary import PersonalDictionary
-from g4speak.text.proofreading import protected_content_matches, text_chunks
+from g4speak.text.proofreading import protected_content_matches, text_chunks, has_unsupported_thai_replacement
 
 
 class SmartRefinerTests(unittest.TestCase):
@@ -36,7 +36,8 @@ class SmartRefinerTests(unittest.TestCase):
                 self.client.chat.completions.create.return_value = self.result(expected)
                 self.assertEqual(self.refiner.refine(raw), expected)
         options = self.client.chat.completions.create.call_args.kwargs
-        self.assertEqual(options['reasoning_effort'], 'low')
+        self.assertEqual(options['reasoning_effort'], 'none')
+        self.assertEqual(options['extra_body'], {'reasoning_format': 'hidden'})
         self.assertGreater(options['max_tokens'], 160)
 
     def test_reported_folder_and_thai_vocabulary_errors_are_accepted_in_context(self):
@@ -95,6 +96,30 @@ class SmartRefinerTests(unittest.TestCase):
             self.assertEqual(''.join(chunks), raw)
             self.assertTrue(all(len(chunk) <= 1000 for chunk in chunks))
 
+    def test_multilingual_chunks_fit_token_budget_and_keep_combining_marks(self):
+        import unicodedata
+        for raw in ('ทดสอบการรู้จำคำศัพท์ที่ซับซ้อน' * 80, 'check this sentence. ' * 200, '👋' * 500):
+            chunks = text_chunks(raw, max_bytes=700)
+            self.assertEqual(''.join(chunks), raw)
+            self.assertTrue(all(len(chunk.encode('utf-8')) <= 700 for chunk in chunks))
+            self.assertTrue(all(not unicodedata.category(chunk[0]).startswith('M') for chunk in chunks))
+
+    def test_thai_output_fits_byte_budget_and_neighbors_are_read_only(self):
+        raw = ('ช่วยตรวจสอบประสิทธิภาพของระบบนี้ด้วย ' * 40).strip()
+        calls = []
+        def echo(**options):
+            data = json.loads(options['messages'][-1]['content'])
+            self.assertLessEqual(len(data['transcript'].encode('utf-8')), 700)
+            self.assertLessEqual(options['max_tokens'], 1000)
+            calls.append(data)
+            return self.result(data['transcript'])
+        self.client.chat.completions.create.side_effect = echo
+        self.assertEqual(self.refiner.refine(raw), raw)
+        self.assertEqual(calls[0]['context_before'], '')
+        self.assertTrue(calls[0]['context_after'])
+        self.assertTrue(calls[1]['context_before'])
+        self.assertEqual(calls[-1]['context_after'], '')
+
     def test_changed_numbers_negations_and_identifiers_are_rejected(self):
         pairs = (
             ('pay 2500 today', 'pay 3500 today'),
@@ -127,6 +152,50 @@ class SmartRefinerTests(unittest.TestCase):
         self.assertEqual(self.refiner.refine('keep this entire sentence'), 'keep this entire sentence')
         self.client.chat.completions.create.side_effect = RuntimeError('unavailable')
         self.assertEqual(self.refiner.refine('keep this entire sentence'), 'keep this entire sentence')
+
+    def test_rejected_translation_reconsiders_original_with_bounded_reasoning(self):
+        raw = 'ช่วยตรวจคูเบอร์เนทีสคลัสเตอร์ให้หน่อย'
+        expected = 'ช่วยตรวจ Kubernetes คลัสเตอร์ให้หน่อย'
+        self.refiner._dictionary = SimpleNamespace(words=('Kubernetes',))
+        self.client.chat.completions.create.side_effect = [
+            self.result('ช่วยตรวจ Kubernetes cluster ให้หน่อย'), self.result(expected),
+        ]
+        self.assertEqual(self.refiner.refine(raw), expected)
+        calls = self.client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([call.kwargs['reasoning_effort'] for call in calls], ['none', 'low'])
+        self.assertEqual(calls[1].kwargs['max_tokens'], 1000)
+        for call in calls:
+            self.assertEqual(json.loads(call.kwargs['messages'][-1]['content'])['transcript'], raw)
+
+    def test_failed_reconsideration_never_relaxes_content_guards_or_retries_again(self):
+        raw = 'do not delete the file'
+        self.refiner._dictionary = SimpleNamespace(words=('Example',))
+        self.client.chat.completions.create.return_value = self.result('do delete the file')
+        self.assertEqual(self.refiner.refine(raw), raw)
+        self.assertEqual(self.client.chat.completions.create.call_count, 2)
+
+    def test_large_local_thai_rewrite_is_not_hidden_by_long_unchanged_context(self):
+        raw = 'เมื่อพิจารณาทุกสิ่งแล้วก็ไม่น่าแปลกใจเลยหากปรรณพบุรุษของเราจะแก้ไขปัญหาเรื่องโปรตีน'
+        invented = raw.replace('ปรรณพบุรุษ', 'ปราชญ์บุรุษ')
+        self.client.chat.completions.create.return_value = self.result(invented)
+        self.assertEqual(self.refiner.refine(raw), raw)
+        self.client.chat.completions.create.assert_called_once()
+        self.assertTrue(main.TextRefiner._is_valid_correction(raw, raw.replace('ปรรณพบุรุษ', 'บรรพบุรุษ')))
+        self.assertTrue(main.TextRefiner._is_valid_correction('พื้นผิวของดวงจำประกอบด้วยหิน', 'พื้นผิวของดวงจันทร์ประกอบด้วยหิน'))
+        self.assertTrue(has_unsupported_thai_replacement('ทดสอบกขคระบบ', 'ทดสอบงจฉระบบ'))
+        self.assertFalse(has_unsupported_thai_replacement('ทดสอบกขคระบบ', 'ทดสอบงจฉระบบ', ('งจฉระบบ',)))
+
+    def test_reasoning_retry_is_skipped_when_deadline_is_near(self):
+        deadline = time.monotonic() + 2
+        self.refiner._dictionary = SimpleNamespace(words=('Example',))
+        with patch.object(main.time, 'monotonic', return_value=deadline - 1) as clock:
+            def slow_rejected_response(**options):
+                clock.return_value = deadline - .5
+                return self.result('do delete the file')
+            self.client.chat.completions.create.side_effect = slow_rejected_response
+            self.assertEqual(self.refiner.refine('do not delete the file', deadline=deadline), 'do not delete the file')
+        self.client.chat.completions.create.assert_called_once()
 
     def test_rate_limit_preserves_all_text_and_avoids_further_requests(self):
         error = RuntimeError('quota')
@@ -166,6 +235,7 @@ class SmartRefinerTests(unittest.TestCase):
             self.client.chat.completions.create.return_value = self.result('Hello world.')
             self.refiner.refine('hello world')
             self.assertNotIn('reasoning_effort', self.client.chat.completions.create.call_args.kwargs)
+            self.assertNotIn('extra_body', self.client.chat.completions.create.call_args.kwargs)
 
 
 class DictationModeTests(unittest.TestCase):
